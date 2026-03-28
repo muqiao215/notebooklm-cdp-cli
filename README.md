@@ -55,12 +55,46 @@ uv sync
 uv run notebooklm-cdp --help
 ```
 
-## Example
+## Configuration
+
+There is no single built-in profile path that works across machines.
+
+Use one of these patterns instead:
+
+### 1. Attach with an explicit Chrome profile path
 
 ```bash
-uv run notebooklm-cdp browser attach
+uv run notebooklm-cdp browser attach \
+  --user-data-dir "/path/to/your/chrome-profile"
+
 uv run notebooklm-cdp auth check
 uv run notebooklm-cdp notebook list
+```
+
+### 2. Configure the profile path through an environment variable
+
+```bash
+export NOTEBOOKLM_CDP_USER_DATA_DIR="/path/to/your/chrome-profile"
+
+uv run notebooklm-cdp browser attach
+uv run notebooklm-cdp auth check
+```
+
+### 3. Connect to an already-known CDP host/port directly
+
+```bash
+uv run notebooklm-cdp --host 127.0.0.1 --port 9222 browser status
+uv run notebooklm-cdp --host 127.0.0.1 --port 9222 auth check
+```
+
+## Example Workflow
+
+```bash
+uv run notebooklm-cdp browser attach --user-data-dir "/path/to/your/chrome-profile"
+uv run notebooklm-cdp auth check
+uv run notebooklm-cdp notebook list
+uv run notebooklm-cdp source list --notebook <notebook-id>
+uv run notebooklm-cdp ask "Summarize the main ideas in Chinese." --notebook <notebook-id>
 ```
 
 ## License
