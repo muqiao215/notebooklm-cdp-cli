@@ -29,6 +29,8 @@ from notebooklm.types import ChatMode
 from .auth import AuthService
 from .config import Settings
 
+_MISSING_ARTIFACT_ID_HINT = "no artifact_id returned"
+
 
 def _notebook_to_dict(notebook) -> dict[str, Any]:
     created_at = notebook.created_at.isoformat() if notebook.created_at else None
@@ -113,6 +115,36 @@ def _status_to_dict(status) -> dict[str, Any]:
         "error_code": status.error_code,
         "metadata": status.metadata,
     }
+
+
+def _normalize_generation_status(status) -> dict[str, Any]:
+    error = status.error or ""
+    if (
+        not status.task_id
+        and status.status == "failed"
+        and _MISSING_ARTIFACT_ID_HINT in error.lower()
+    ):
+        metadata = dict(status.metadata or {})
+        metadata.update(
+            {
+                "accepted_without_task_id": True,
+                "poll_supported": False,
+                "list_supported": True,
+                "tracking_hint": "Use artifact list to find the generated artifact once it appears.",
+                "upstream_status": status.status,
+                "upstream_error": status.error,
+                "upstream_error_code": status.error_code,
+            }
+        )
+        return {
+            "task_id": None,
+            "status": "pending",
+            "url": status.url,
+            "error": None,
+            "error_code": None,
+            "metadata": metadata,
+        }
+    return _status_to_dict(status)
 
 
 def _enum_member(enum_cls, value: str | None):
@@ -702,15 +734,9 @@ async def generate_report(
             custom_prompt=custom_prompt,
             extra_instructions=extra_instructions,
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {
-        "task_id": status.task_id,
-        "status": status.status,
-        "url": status.url,
-        "error": status.error,
-        "error_code": status.error_code,
-    }
+    return _normalize_generation_status(status)
 
 
 async def generate_audio(
@@ -733,15 +759,9 @@ async def generate_audio(
             audio_format=_enum_member(AudioFormat, audio_format),
             audio_length=_enum_member(AudioLength, audio_length),
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return {
-        "task_id": status.task_id,
-        "status": status.status,
-        "url": status.url,
-        "error": status.error,
-        "error_code": status.error_code,
-    }
+    return _normalize_generation_status(status)
 
 
 async def poll_artifact(settings: Settings, notebook_id: str, task_id: str) -> dict[str, Any]:
@@ -798,9 +818,9 @@ async def generate_video(
             video_format=_enum_member(VideoFormat, video_format),
             video_style=_enum_member(VideoStyle, style),
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_cinematic_video(
@@ -819,9 +839,9 @@ async def generate_cinematic_video(
             language=language or "en",
             instructions=instructions,
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_slide_deck(
@@ -844,9 +864,9 @@ async def generate_slide_deck(
             slide_format=_enum_member(SlideDeckFormat, slide_format),
             slide_length=_enum_member(SlideDeckLength, length),
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def revise_slide(
@@ -865,9 +885,9 @@ async def revise_slide(
             slide_index=slide_index,
             prompt=prompt,
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_infographic(
@@ -892,9 +912,9 @@ async def generate_infographic(
             detail_level=_enum_member(InfographicDetail, detail),
             style=_enum_member(InfographicStyle, style),
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_quiz(
@@ -913,9 +933,9 @@ async def generate_quiz(
             quantity=_enum_member(QuizQuantity, quantity),
             difficulty=_enum_member(QuizDifficulty, difficulty),
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_flashcards(
@@ -934,9 +954,9 @@ async def generate_flashcards(
             quantity=_enum_member(QuizQuantity, quantity),
             difficulty=_enum_member(QuizDifficulty, difficulty),
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_data_table(
@@ -951,9 +971,9 @@ async def generate_data_table(
             notebook_id,
             instructions=instructions,
         )
-        if wait:
+        if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _status_to_dict(status)
+    return _normalize_generation_status(status)
 
 
 async def generate_mind_map(settings: Settings, notebook_id: str) -> dict[str, Any]:
