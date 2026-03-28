@@ -1,0 +1,1202 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import asdict
+from typing import Any
+
+from notebooklm.client import NotebookLMClient
+from notebooklm.cli.language import SUPPORTED_LANGUAGES
+from notebooklm.rpc import (
+    AudioFormat,
+    AudioLength,
+    ChatGoal,
+    ChatResponseLength,
+    ExportType,
+    InfographicDetail,
+    InfographicOrientation,
+    InfographicStyle,
+    QuizDifficulty,
+    QuizQuantity,
+    SlideDeckFormat,
+    SlideDeckLength,
+    VideoFormat,
+    VideoStyle,
+)
+from notebooklm.rpc.types import ReportFormat, SharePermission, ShareViewLevel
+from notebooklm.types import ArtifactType
+from notebooklm.types import ChatMode
+
+from .auth import AuthService
+from .config import Settings
+
+
+def _notebook_to_dict(notebook) -> dict[str, Any]:
+    created_at = notebook.created_at.isoformat() if notebook.created_at else None
+    return {
+        "id": notebook.id,
+        "title": notebook.title,
+        "created_at": created_at,
+        "is_owner": notebook.is_owner,
+    }
+
+
+def _topic_to_dict(topic) -> dict[str, Any]:
+    return {
+        "question": topic.question,
+        "prompt": topic.prompt,
+    }
+
+
+def _source_to_dict(source) -> dict[str, Any]:
+    created_at = source.created_at.isoformat() if source.created_at else None
+    kind = getattr(source.kind, "value", str(source.kind))
+    return {
+        "id": source.id,
+        "title": source.title,
+        "url": source.url,
+        "kind": kind,
+        "created_at": created_at,
+        "status": source.status,
+    }
+
+
+def _artifact_to_dict(artifact) -> dict[str, Any]:
+    created_at = artifact.created_at.isoformat() if artifact.created_at else None
+    kind = getattr(artifact.kind, "value", str(artifact.kind))
+    return {
+        "id": artifact.id,
+        "title": artifact.title,
+        "kind": kind,
+        "status": artifact.status,
+        "created_at": created_at,
+        "url": artifact.url,
+    }
+
+
+def _note_to_dict(note) -> dict[str, Any]:
+    created_at = note.created_at.isoformat() if note.created_at else None
+    return {
+        "id": note.id,
+        "notebook_id": note.notebook_id,
+        "title": note.title,
+        "content": note.content,
+        "created_at": created_at,
+    }
+
+
+def _shared_user_to_dict(user) -> dict[str, Any]:
+    return {
+        "email": user.email,
+        "permission": user.permission.name.lower(),
+        "display_name": user.display_name,
+        "avatar_url": user.avatar_url,
+    }
+
+
+def _share_status_to_dict(status) -> dict[str, Any]:
+    return {
+        "notebook_id": status.notebook_id,
+        "is_public": status.is_public,
+        "access": status.access.name.lower(),
+        "view_level": status.view_level.name.lower(),
+        "share_url": status.share_url,
+        "shared_users": [_shared_user_to_dict(user) for user in status.shared_users],
+    }
+
+
+def _status_to_dict(status) -> dict[str, Any]:
+    return {
+        "task_id": status.task_id,
+        "status": status.status,
+        "url": status.url,
+        "error": status.error,
+        "error_code": status.error_code,
+        "metadata": status.metadata,
+    }
+
+
+def _enum_member(enum_cls, value: str | None):
+    if value is None:
+        return None
+    return enum_cls[value.replace("-", "_").upper()]
+
+
+def list_languages() -> list[dict[str, str]]:
+    return [{"code": code, "name": name} for code, name in SUPPORTED_LANGUAGES.items()]
+
+
+def get_language_name(language: str | None) -> str | None:
+    if language is None:
+        return None
+    return SUPPORTED_LANGUAGES.get(language)
+
+
+async def list_notebooks(settings: Settings) -> list[dict[str, Any]]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        notebooks = await client.notebooks.list()
+    return [_notebook_to_dict(notebook) for notebook in notebooks]
+
+
+async def get_notebook(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        notebook = await client.notebooks.get(notebook_id)
+    return _notebook_to_dict(notebook)
+
+
+async def create_notebook(settings: Settings, title: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        notebook = await client.notebooks.create(title)
+    return _notebook_to_dict(notebook)
+
+
+async def rename_notebook(settings: Settings, notebook_id: str, title: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        notebook = await client.notebooks.rename(notebook_id, title)
+    return _notebook_to_dict(notebook)
+
+
+async def delete_notebook(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        deleted = await client.notebooks.delete(notebook_id)
+    return {"deleted": bool(deleted), "notebook_id": notebook_id}
+
+
+async def get_notebook_summary(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        summary = await client.notebooks.get_summary(notebook_id)
+    return {"notebook_id": notebook_id, "summary": summary}
+
+
+async def describe_notebook(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        description = await client.notebooks.get_description(notebook_id)
+    return {
+        "notebook_id": notebook_id,
+        "summary": description.summary,
+        "suggested_topics": [_topic_to_dict(topic) for topic in description.suggested_topics],
+    }
+
+
+async def get_notebook_metadata(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        metadata = await client.notebooks.get_metadata(notebook_id)
+    return metadata.to_dict()
+
+
+async def remove_notebook_from_recent(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        await client.notebooks.remove_from_recent(notebook_id)
+    return {"notebook_id": notebook_id, "removed_from_recent": True}
+
+
+async def list_sources(settings: Settings, notebook_id: str) -> list[dict[str, Any]]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        sources = await client.sources.list(notebook_id)
+    return [_source_to_dict(source) for source in sources]
+
+
+async def add_source_url(settings: Settings, notebook_id: str, url: str, wait: bool) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.add_url(notebook_id, url, wait=wait)
+    return _source_to_dict(source)
+
+
+async def add_source_file(
+    settings: Settings,
+    notebook_id: str,
+    file_path: str,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.add_file(notebook_id, file_path, wait=wait)
+    return _source_to_dict(source)
+
+
+async def get_source(settings: Settings, notebook_id: str, source_id: str) -> dict[str, Any] | None:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.get(notebook_id, source_id)
+    if source is None:
+        return None
+    return _source_to_dict(source)
+
+
+async def wait_for_source(
+    settings: Settings,
+    notebook_id: str,
+    source_id: str,
+    initial_interval: float,
+    max_interval: float,
+    timeout: float,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.wait_until_ready(
+            notebook_id,
+            source_id,
+            timeout=timeout,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+        )
+    return _source_to_dict(source)
+
+
+async def add_source_text(
+    settings: Settings,
+    notebook_id: str,
+    title: str,
+    content: str,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.add_text(notebook_id, title, content, wait=wait)
+    return _source_to_dict(source)
+
+
+async def add_source_drive(
+    settings: Settings,
+    notebook_id: str,
+    file_id: str,
+    title: str,
+    mime_type: str,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.add_drive(
+            notebook_id,
+            file_id,
+            title,
+            mime_type=mime_type,
+            wait=wait,
+        )
+    return _source_to_dict(source)
+
+
+async def rename_source(
+    settings: Settings,
+    notebook_id: str,
+    source_id: str,
+    title: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        source = await client.sources.rename(notebook_id, source_id, title)
+    return _source_to_dict(source)
+
+
+async def delete_source(settings: Settings, notebook_id: str, source_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        deleted = await client.sources.delete(notebook_id, source_id)
+    return {"deleted": bool(deleted), "source_id": source_id}
+
+
+async def refresh_source(settings: Settings, notebook_id: str, source_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        refreshed = await client.sources.refresh(notebook_id, source_id)
+    return {"source_id": source_id, "refreshed": bool(refreshed)}
+
+
+async def check_source_freshness(
+    settings: Settings,
+    notebook_id: str,
+    source_id: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        is_fresh = await client.sources.check_freshness(notebook_id, source_id)
+    return {"source_id": source_id, "is_fresh": bool(is_fresh), "is_stale": not bool(is_fresh)}
+
+
+async def get_source_guide(settings: Settings, notebook_id: str, source_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        guide = await client.sources.get_guide(notebook_id, source_id)
+    return {"source_id": source_id, **guide}
+
+
+async def get_source_fulltext(settings: Settings, notebook_id: str, source_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        fulltext = await client.sources.get_fulltext(notebook_id, source_id)
+    return {
+        "source_id": fulltext.source_id,
+        "title": fulltext.title,
+        "kind": getattr(fulltext.kind, "value", str(fulltext.kind)),
+        "content": fulltext.content,
+        "char_count": fulltext.char_count,
+        "url": fulltext.url,
+    }
+
+
+async def wait_for_sources(
+    settings: Settings,
+    notebook_id: str,
+    source_ids: list[str],
+    initial_interval: float,
+    max_interval: float,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        sources = await client.sources.wait_for_sources(
+            notebook_id,
+            source_ids,
+            timeout=timeout,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+        )
+    return [_source_to_dict(source) for source in sources]
+
+
+async def ask_question(
+    settings: Settings,
+    notebook_id: str,
+    question: str,
+    conversation_id: str | None,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        result = await client.chat.ask(
+            notebook_id,
+            question,
+            source_ids=source_ids,
+            conversation_id=conversation_id,
+        )
+    return {
+        "answer": result.answer,
+        "conversation_id": result.conversation_id,
+        "turn_number": result.turn_number,
+        "is_follow_up": result.is_follow_up,
+        "references": [asdict(reference) for reference in result.references],
+    }
+
+
+async def get_chat_history(
+    settings: Settings,
+    notebook_id: str,
+    limit: int,
+    conversation_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        resolved_conversation = conversation_id or await client.chat.get_conversation_id(notebook_id)
+        history = await client.chat.get_history(
+            notebook_id,
+            limit=limit,
+            conversation_id=resolved_conversation,
+        )
+    return {
+        "notebook_id": notebook_id,
+        "conversation_id": resolved_conversation,
+        "count": len(history),
+        "qa_pairs": [
+            {"turn": index, "question": question, "answer": answer}
+            for index, (question, answer) in enumerate(history, start=1)
+        ],
+    }
+
+
+async def configure_chat(
+    settings: Settings,
+    notebook_id: str,
+    mode: str | None,
+    persona: str | None,
+    response_length: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        if mode is not None:
+            mode_map = {
+                "default": ChatMode.DEFAULT,
+                "learning-guide": ChatMode.LEARNING_GUIDE,
+                "concise": ChatMode.CONCISE,
+                "detailed": ChatMode.DETAILED,
+            }
+            await client.chat.set_mode(notebook_id, mode_map[mode])
+        else:
+            response_length_map = {
+                "default": ChatResponseLength.DEFAULT,
+                "longer": ChatResponseLength.LONGER,
+                "shorter": ChatResponseLength.SHORTER,
+            }
+            goal = ChatGoal.CUSTOM if persona else None
+            await client.chat.configure(
+                notebook_id,
+                goal=goal,
+                response_length=response_length_map.get(response_length),
+                custom_prompt=persona,
+            )
+    return {
+        "notebook_id": notebook_id,
+        "mode": mode,
+        "persona": persona,
+        "response_length": response_length,
+    }
+
+
+async def get_share_status(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.sharing.get_status(notebook_id)
+    return _share_status_to_dict(status)
+
+
+async def set_share_public(settings: Settings, notebook_id: str, public: bool) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.sharing.set_public(notebook_id, public)
+    return _share_status_to_dict(status)
+
+
+async def set_share_view_level(settings: Settings, notebook_id: str, level: str) -> dict[str, Any]:
+    level_map = {
+        "full_notebook": ShareViewLevel.FULL_NOTEBOOK,
+        "chat_only": ShareViewLevel.CHAT_ONLY,
+    }
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.sharing.set_view_level(notebook_id, level_map[level])
+    return _share_status_to_dict(status)
+
+
+async def add_share_user(
+    settings: Settings,
+    notebook_id: str,
+    email: str,
+    permission: str,
+    notify: bool,
+    message: str,
+) -> dict[str, Any]:
+    permission_map = {
+        "viewer": SharePermission.VIEWER,
+        "editor": SharePermission.EDITOR,
+    }
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        await client.sharing.add_user(
+            notebook_id,
+            email,
+            permission=permission_map[permission],
+            notify=notify,
+            welcome_message=message,
+        )
+    return {
+        "notebook_id": notebook_id,
+        "added_user": email,
+        "permission": permission,
+        "notified": notify,
+    }
+
+
+async def update_share_user(
+    settings: Settings,
+    notebook_id: str,
+    email: str,
+    permission: str,
+) -> dict[str, Any]:
+    permission_map = {
+        "viewer": SharePermission.VIEWER,
+        "editor": SharePermission.EDITOR,
+    }
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        await client.sharing.update_user(notebook_id, email, permission_map[permission])
+    return {
+        "notebook_id": notebook_id,
+        "updated_user": email,
+        "permission": permission,
+    }
+
+
+async def remove_share_user(settings: Settings, notebook_id: str, email: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        await client.sharing.remove_user(notebook_id, email)
+    return {
+        "notebook_id": notebook_id,
+        "removed_user": email,
+    }
+
+
+async def start_research(
+    settings: Settings,
+    notebook_id: str,
+    query: str,
+    search_source: str,
+    mode: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        result = await client.research.start(notebook_id, query, search_source, mode)
+    if result is None:
+        return {
+            "notebook_id": notebook_id,
+            "query": query,
+            "source": search_source,
+            "mode": mode,
+            "status": "failed",
+        }
+    return {
+        **result,
+        "source": search_source,
+        "status": "started",
+    }
+
+
+async def get_research_status(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.research.poll(notebook_id)
+    return {"notebook_id": notebook_id, **status}
+
+
+async def wait_for_research(
+    settings: Settings,
+    notebook_id: str,
+    timeout: int,
+    interval: int,
+    import_all: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        elapsed = 0
+        status = await client.research.poll(notebook_id)
+        while status.get("status") == "in_progress" and elapsed < timeout:
+            await asyncio.sleep(interval)
+            elapsed += interval
+            status = await client.research.poll(notebook_id)
+
+        payload = {"notebook_id": notebook_id, **status}
+        if status.get("status") != "completed":
+            if status.get("status") == "no_research":
+                payload["error"] = "No research running"
+            elif status.get("status") == "in_progress":
+                payload["status"] = "timeout"
+                payload["error"] = f"Timed out after {timeout}s"
+            return payload
+
+        if import_all and status.get("task_id") and status.get("sources"):
+            imported = await client.research.import_sources(
+                notebook_id,
+                status["task_id"],
+                status["sources"],
+            )
+            payload["imported"] = len(imported)
+            payload["imported_sources"] = imported
+        return payload
+
+
+async def add_research_source(
+    settings: Settings,
+    notebook_id: str,
+    query: str,
+    search_source: str,
+    mode: str,
+    wait: bool,
+    import_all: bool,
+) -> dict[str, Any]:
+    started = await start_research(settings, notebook_id, query, search_source, mode)
+    if not wait:
+        return started
+    return await wait_for_research(settings, notebook_id, timeout=300, interval=5, import_all=import_all)
+
+
+async def list_artifacts(
+    settings: Settings,
+    notebook_id: str,
+    kind: str | None,
+) -> list[dict[str, Any]]:
+    auth = await AuthService(settings).notebooklm_auth()
+    artifact_kind = ArtifactType(kind) if kind else None
+    async with NotebookLMClient(auth) as client:
+        artifacts = await client.artifacts.list(notebook_id, artifact_kind)
+    return [_artifact_to_dict(artifact) for artifact in artifacts]
+
+
+async def get_artifact(settings: Settings, notebook_id: str, artifact_id: str) -> dict[str, Any] | None:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        artifact = await client.artifacts.get(notebook_id, artifact_id)
+    if artifact is None:
+        return None
+    return _artifact_to_dict(artifact)
+
+
+async def rename_artifact(
+    settings: Settings,
+    notebook_id: str,
+    artifact_id: str,
+    title: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        await client.artifacts.rename(notebook_id, artifact_id, title)
+        artifact = await client.artifacts.get(notebook_id, artifact_id)
+    if artifact is None:
+        return {"id": artifact_id, "title": title}
+    return _artifact_to_dict(artifact)
+
+
+async def delete_artifact(settings: Settings, notebook_id: str, artifact_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        deleted = await client.artifacts.delete(notebook_id, artifact_id)
+    return {"deleted": bool(deleted), "artifact_id": artifact_id}
+
+
+async def export_artifact(
+    settings: Settings,
+    notebook_id: str,
+    artifact_id: str,
+    export_type: str,
+    title: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        result = await client.artifacts.export(
+            notebook_id,
+            artifact_id=artifact_id,
+            title=title,
+            export_type=ExportType[export_type.upper()],
+        )
+    payload = result if isinstance(result, dict) else {"result": result}
+    payload["artifact_id"] = artifact_id
+    payload["export_type"] = export_type
+    return payload
+
+
+async def generate_report(
+    settings: Settings,
+    notebook_id: str,
+    report_format: str,
+    custom_prompt: str | None,
+    wait: bool = False,
+    extra_instructions: str | None = None,
+    language: str | None = None,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_report(
+            notebook_id,
+            report_format=ReportFormat(report_format),
+            source_ids=source_ids,
+            language=language or "en",
+            custom_prompt=custom_prompt,
+            extra_instructions=extra_instructions,
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return {
+        "task_id": status.task_id,
+        "status": status.status,
+        "url": status.url,
+        "error": status.error,
+        "error_code": status.error_code,
+    }
+
+
+async def generate_audio(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    wait: bool = False,
+    language: str | None = None,
+    source_ids: list[str] | None = None,
+    audio_format: str | None = None,
+    audio_length: str | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_audio(
+            notebook_id,
+            source_ids=source_ids,
+            language=language or "en",
+            instructions=instructions,
+            audio_format=_enum_member(AudioFormat, audio_format),
+            audio_length=_enum_member(AudioLength, audio_length),
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return {
+        "task_id": status.task_id,
+        "status": status.status,
+        "url": status.url,
+        "error": status.error,
+        "error_code": status.error_code,
+    }
+
+
+async def poll_artifact(settings: Settings, notebook_id: str, task_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.poll_status(notebook_id, task_id)
+    return _status_to_dict(status)
+
+
+async def wait_for_artifact(
+    settings: Settings,
+    notebook_id: str,
+    task_id: str,
+    initial_interval: float,
+    max_interval: float,
+    timeout: float,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.wait_for_completion(
+            notebook_id,
+            task_id,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+            timeout=timeout,
+        )
+    return _status_to_dict(status)
+
+
+async def suggest_report_formats(settings: Settings, notebook_id: str) -> list[dict[str, Any]]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        suggestions = await client.artifacts.suggest_reports(notebook_id)
+    return [asdict(suggestion) for suggestion in suggestions]
+
+
+async def generate_video(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    video_format: str | None,
+    style: str | None,
+    wait: bool = False,
+    language: str | None = None,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_video(
+            notebook_id,
+            source_ids=source_ids,
+            language=language or "en",
+            instructions=instructions,
+            video_format=_enum_member(VideoFormat, video_format),
+            video_style=_enum_member(VideoStyle, style),
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_cinematic_video(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    wait: bool = False,
+    language: str | None = None,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_cinematic_video(
+            notebook_id,
+            source_ids=source_ids,
+            language=language or "en",
+            instructions=instructions,
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_slide_deck(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    slide_format: str | None,
+    length: str | None,
+    wait: bool = False,
+    language: str | None = None,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_slide_deck(
+            notebook_id,
+            source_ids=source_ids,
+            language=language or "en",
+            instructions=instructions,
+            slide_format=_enum_member(SlideDeckFormat, slide_format),
+            slide_length=_enum_member(SlideDeckLength, length),
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def revise_slide(
+    settings: Settings,
+    notebook_id: str,
+    artifact_id: str,
+    slide_index: int,
+    prompt: str,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.revise_slide(
+            notebook_id,
+            artifact_id=artifact_id,
+            slide_index=slide_index,
+            prompt=prompt,
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_infographic(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    orientation: str | None,
+    detail: str | None,
+    style: str | None,
+    wait: bool = False,
+    language: str | None = None,
+    source_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_infographic(
+            notebook_id,
+            source_ids=source_ids,
+            language=language or "en",
+            instructions=instructions,
+            orientation=_enum_member(InfographicOrientation, orientation),
+            detail_level=_enum_member(InfographicDetail, detail),
+            style=_enum_member(InfographicStyle, style),
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_quiz(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    quantity: str | None,
+    difficulty: str | None,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_quiz(
+            notebook_id,
+            instructions=instructions,
+            quantity=_enum_member(QuizQuantity, quantity),
+            difficulty=_enum_member(QuizDifficulty, difficulty),
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_flashcards(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    quantity: str | None,
+    difficulty: str | None,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_flashcards(
+            notebook_id,
+            instructions=instructions,
+            quantity=_enum_member(QuizQuantity, quantity),
+            difficulty=_enum_member(QuizDifficulty, difficulty),
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_data_table(
+    settings: Settings,
+    notebook_id: str,
+    instructions: str | None,
+    wait: bool,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        status = await client.artifacts.generate_data_table(
+            notebook_id,
+            instructions=instructions,
+        )
+        if wait:
+            status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+    return _status_to_dict(status)
+
+
+async def generate_mind_map(settings: Settings, notebook_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        payload = await client.artifacts.generate_mind_map(notebook_id)
+    return {
+        "kind": "mind_map",
+        "note_id": payload.get("note_id"),
+        "mind_map": payload.get("mind_map"),
+    }
+
+
+async def download_report(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_report(notebook_id, output_path, artifact_id=artifact_id)
+    return {"output_path": path}
+
+
+async def download_audio(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_audio(notebook_id, output_path, artifact_id=artifact_id)
+    return {"output_path": path}
+
+
+async def download_video(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_video(notebook_id, output_path, artifact_id=artifact_id)
+    return {"output_path": path}
+
+
+async def download_slide_deck(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+    output_format: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_slide_deck(
+            notebook_id,
+            output_path,
+            artifact_id=artifact_id,
+            output_format=output_format,
+        )
+    return {"output_path": path}
+
+
+async def download_infographic(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_infographic(
+            notebook_id,
+            output_path,
+            artifact_id=artifact_id,
+        )
+    return {"output_path": path}
+
+
+async def download_quiz(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+    output_format: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_quiz(
+            notebook_id,
+            output_path,
+            artifact_id=artifact_id,
+            output_format=output_format,
+        )
+    return {"output_path": path}
+
+
+async def download_flashcards(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+    output_format: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_flashcards(
+            notebook_id,
+            output_path,
+            artifact_id=artifact_id,
+            output_format=output_format,
+        )
+    return {"output_path": path}
+
+
+async def download_data_table(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_data_table(
+            notebook_id,
+            output_path,
+            artifact_id=artifact_id,
+        )
+    return {"output_path": path}
+
+
+async def download_mind_map(
+    settings: Settings,
+    notebook_id: str,
+    output_path: str,
+    artifact_id: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        path = await client.artifacts.download_mind_map(
+            notebook_id,
+            output_path,
+            artifact_id=artifact_id,
+        )
+    return {"output_path": path}
+
+
+async def get_output_language(settings: Settings) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        language = await client.settings.get_output_language()
+    return {"language": language, "name": get_language_name(language)}
+
+
+async def set_output_language(settings: Settings, language: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        result = await client.settings.set_output_language(language)
+    language_code = result or language
+    return {"language": language_code, "name": get_language_name(language_code)}
+
+
+async def list_notes(settings: Settings, notebook_id: str) -> list[dict[str, Any]]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        notes = await client.notes.list(notebook_id)
+    return [_note_to_dict(note) for note in notes]
+
+
+async def get_note(settings: Settings, notebook_id: str, note_id: str) -> dict[str, Any] | None:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        note = await client.notes.get(notebook_id, note_id)
+    if note is None:
+        return None
+    return _note_to_dict(note)
+
+
+async def create_note(
+    settings: Settings,
+    notebook_id: str,
+    title: str,
+    content: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        note = await client.notes.create(notebook_id, title=title, content=content)
+    return _note_to_dict(note)
+
+
+async def save_note(
+    settings: Settings,
+    notebook_id: str,
+    note_id: str,
+    content: str,
+    title: str | None,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        existing = await client.notes.get(notebook_id, note_id)
+        resolved_title = title if title is not None else (existing.title if existing else "")
+        await client.notes.update(notebook_id, note_id, content, resolved_title)
+        note = await client.notes.get(notebook_id, note_id)
+    if note is None:
+        return {
+            "id": note_id,
+            "notebook_id": notebook_id,
+            "title": resolved_title,
+            "content": content,
+            "created_at": None,
+        }
+    return _note_to_dict(note)
+
+
+async def rename_note(
+    settings: Settings,
+    notebook_id: str,
+    note_id: str,
+    title: str,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        existing = await client.notes.get(notebook_id, note_id)
+        content = existing.content if existing else ""
+        await client.notes.update(notebook_id, note_id, content, title)
+        note = await client.notes.get(notebook_id, note_id)
+    if note is None:
+        return {
+            "id": note_id,
+            "notebook_id": notebook_id,
+            "title": title,
+            "content": content,
+            "created_at": None,
+        }
+    return _note_to_dict(note)
+
+
+async def delete_note(settings: Settings, notebook_id: str, note_id: str) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        deleted = await client.notes.delete(notebook_id, note_id)
+    return {"deleted": bool(deleted), "note_id": note_id}

@@ -1,0 +1,73 @@
+# notebooklm-cdp-cli
+
+`notebooklm-cdp-cli` is an unofficial NotebookLM CLI focused on one specific
+tradeoff: reusing a live Chrome identity through CDP instead of treating
+Playwright `storage_state.json` as the source of truth.
+
+The project exposes an independent CLI surface for NotebookLM workflows such as
+notebook management, source import, chat, artifact generation, sharing, notes,
+and research operations.
+
+## Why This Exists
+
+The main goal is to make NotebookLM automation more usable in environments where
+the real Google login state already lives in a persistent local Chrome profile.
+
+Compared with browser-first automation, this project is designed to:
+
+- reuse a live Chrome/CDP session for identity bootstrap
+- keep NotebookLM business operations on an RPC/client path
+- avoid DOM-driven text input as the primary execution path
+- keep a standalone CLI/product surface separate from browser-extension stacks
+
+## Current Status
+
+The CLI currently covers:
+
+- browser attach/status and auth diagnostics
+- notebook, source, chat, notes, share, and research commands
+- artifact listing/management
+- report/audio/video/slide/infographic and related download flows
+
+This repository is still early-stage and should be treated as experimental.
+
+## Relationship to notebooklm-py
+
+This project is an independent CLI, but it currently builds on top of
+[`notebooklm-py`](https://github.com/teng-lin/notebooklm-py) for NotebookLM
+client/RPC functionality.
+
+In practice, that means:
+
+- this repo owns the CDP/live-Chrome identity layer
+- this repo owns the CLI surface and local state behavior
+- `notebooklm-py` currently provides the NotebookLM client and RPC types/backend
+
+This project deliberately does **not** use `notebooklm-py`'s
+Playwright/`storage_state.json` flow as its primary auth/session model.
+
+See [THIRD_PARTY.md](THIRD_PARTY.md) for the third-party component note.
+
+## Installation
+
+```bash
+uv sync
+uv run notebooklm-cdp --help
+```
+
+## Example
+
+```bash
+uv run notebooklm-cdp browser attach
+uv run notebooklm-cdp auth check
+uv run notebooklm-cdp notebook list
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+This is an unofficial project. It is not affiliated with or endorsed by Google,
+NotebookLM, OpenAI, OpenCLI, or the `notebooklm-py` project.

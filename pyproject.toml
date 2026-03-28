@@ -1,0 +1,28 @@
+[project]
+name = "notebooklm-cdp-cli"
+version = "0.1.0"
+description = "Standalone NotebookLM CLI backed by live Chrome CDP identity."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "muqiao215" },
+]
+dependencies = [
+  "click>=8.1.7",
+  "httpx>=0.27.2",
+  "notebooklm-py>=0.3.4",
+  "websockets>=12.0",
+]
+
+[project.scripts]
+notebooklm-cdp = "notebooklm_cdp_cli.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
