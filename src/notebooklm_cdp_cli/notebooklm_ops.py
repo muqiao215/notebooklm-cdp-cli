@@ -30,6 +30,15 @@ from .auth import AuthService
 from .config import Settings
 
 _MISSING_ARTIFACT_ID_HINT = "no artifact_id returned"
+_PENDING_VISIBILITY_TIMEOUT = 2.0
+_PENDING_VISIBILITY_INTERVAL = 1.0
+_DOWNLOAD_HINTS = {
+    "audio": "download audio ./audio.mp3 --artifact-id {artifact_id}",
+    "video": "download video ./video.mp4 --artifact-id {artifact_id}",
+    "report": "download report ./report.md --artifact-id {artifact_id}",
+    "infographic": "download infographic ./infographic.png --artifact-id {artifact_id}",
+    "slide_deck": "download slide-deck ./deck.pdf --artifact-id {artifact_id}",
+}
 
 
 def _notebook_to_dict(notebook) -> dict[str, Any]:
@@ -145,6 +154,96 @@ def _normalize_generation_status(status) -> dict[str, Any]:
             "metadata": metadata,
         }
     return _status_to_dict(status)
+
+
+async def _list_artifacts_with_client(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_kind: str | None,
+) -> list[dict[str, Any]]:
+    kind = ArtifactType(artifact_kind) if artifact_kind else None
+    artifacts = await client.artifacts.list(notebook_id, kind)
+    return [_artifact_to_dict(artifact) for artifact in artifacts]
+
+
+def _next_steps_for_pending(
+    artifact_kind: str | None,
+    task_id: str | None,
+    visible_artifact: dict[str, Any] | None,
+) -> list[str]:
+    steps: list[str] = []
+    if task_id:
+        steps.append(f"artifact wait {task_id}")
+    if visible_artifact:
+        artifact_id = visible_artifact["id"]
+        steps.append(f"artifact get {artifact_id}")
+        template = _DOWNLOAD_HINTS.get(artifact_kind or "")
+        if template:
+            steps.append(template.format(artifact_id=artifact_id))
+        return steps
+    if artifact_kind:
+        steps.append(f"artifact list --kind {artifact_kind}")
+    else:
+        steps.append("artifact list")
+    return steps
+
+
+def _merge_pending_follow_up(payload: dict[str, Any], follow_up: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(payload)
+    merged["pending_follow_up"] = follow_up
+    visible_artifacts = list(follow_up.get("visible_artifacts", []))
+    visible_artifact = follow_up.get("visible_artifact")
+    metadata = dict(merged.get("metadata") or {})
+    metadata["new_artifact_count"] = len(visible_artifacts)
+
+    if visible_artifact:
+        merged["artifact_id"] = visible_artifact["id"]
+        merged["visible_artifact"] = visible_artifact
+        merged["visible_artifacts"] = visible_artifacts
+        metadata["matched_artifact_id"] = visible_artifact["id"]
+        metadata["tracking_hint"] = (
+            "A newly visible artifact was detected; use its artifact_id for follow-up commands."
+        )
+    else:
+        metadata["tracking_hint"] = (
+            "Submission was accepted, but no new artifact is visible yet; re-run artifact list or wait if a task_id becomes available."
+        )
+
+    merged["metadata"] = metadata
+    return merged
+
+
+async def _inspect_pending_artifacts_with_client(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_kind: str | None,
+    baseline_artifact_ids: list[str],
+    timeout: float,
+    interval: float,
+    task_id: str | None,
+) -> dict[str, Any]:
+    baseline_ids = set(baseline_artifact_ids)
+    elapsed = 0.0
+    attempts = 0
+    latest: list[dict[str, Any]] = []
+
+    while True:
+        attempts += 1
+        latest = await _list_artifacts_with_client(client, notebook_id, artifact_kind)
+        new_artifacts = [artifact for artifact in latest if artifact["id"] not in baseline_ids]
+        if new_artifacts or elapsed >= timeout:
+            visible_artifact = new_artifacts[0] if len(new_artifacts) == 1 else None
+            return {
+                "checked": True,
+                "artifact_kind": artifact_kind,
+                "artifact_visible": bool(new_artifacts),
+                "visible_artifact": visible_artifact,
+                "visible_artifacts": new_artifacts,
+                "attempts": attempts,
+                "next_steps": _next_steps_for_pending(artifact_kind, task_id, visible_artifact),
+            }
+        await asyncio.sleep(interval)
+        elapsed += interval
 
 
 def _enum_member(enum_cls, value: str | None):
@@ -656,10 +755,29 @@ async def list_artifacts(
     kind: str | None,
 ) -> list[dict[str, Any]]:
     auth = await AuthService(settings).notebooklm_auth()
-    artifact_kind = ArtifactType(kind) if kind else None
     async with NotebookLMClient(auth) as client:
-        artifacts = await client.artifacts.list(notebook_id, artifact_kind)
-    return [_artifact_to_dict(artifact) for artifact in artifacts]
+        return await _list_artifacts_with_client(client, notebook_id, kind)
+
+
+async def inspect_pending_artifacts(
+    settings: Settings,
+    notebook_id: str,
+    artifact_kind: str | None,
+    baseline_artifact_ids: list[str] | None,
+    timeout: float = _PENDING_VISIBILITY_TIMEOUT,
+    interval: float = _PENDING_VISIBILITY_INTERVAL,
+) -> dict[str, Any]:
+    auth = await AuthService(settings).notebooklm_auth()
+    async with NotebookLMClient(auth) as client:
+        return await _inspect_pending_artifacts_with_client(
+            client=client,
+            notebook_id=notebook_id,
+            artifact_kind=artifact_kind,
+            baseline_artifact_ids=list(baseline_artifact_ids or []),
+            timeout=max(timeout, 0.0),
+            interval=max(interval, 0.1),
+            task_id=None,
+        )
 
 
 async def get_artifact(settings: Settings, notebook_id: str, artifact_id: str) -> dict[str, Any] | None:
@@ -726,6 +844,7 @@ async def generate_report(
 ) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
+        baseline_artifacts = await _list_artifacts_with_client(client, notebook_id, "report")
         status = await client.artifacts.generate_report(
             notebook_id,
             report_format=ReportFormat(report_format),
@@ -736,7 +855,19 @@ async def generate_report(
         )
         if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _normalize_generation_status(status)
+        payload = _normalize_generation_status(status)
+        if payload.get("status") == "pending" and payload.get("metadata", {}).get("accepted_without_task_id"):
+            follow_up = await _inspect_pending_artifacts_with_client(
+                client,
+                notebook_id,
+                "report",
+                [artifact["id"] for artifact in baseline_artifacts],
+                timeout=_PENDING_VISIBILITY_TIMEOUT,
+                interval=_PENDING_VISIBILITY_INTERVAL,
+                task_id=payload.get("task_id"),
+            )
+            payload = _merge_pending_follow_up(payload, follow_up)
+    return payload
 
 
 async def generate_audio(
@@ -751,6 +882,7 @@ async def generate_audio(
 ) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
+        baseline_artifacts = await _list_artifacts_with_client(client, notebook_id, "audio")
         status = await client.artifacts.generate_audio(
             notebook_id,
             source_ids=source_ids,
@@ -761,7 +893,19 @@ async def generate_audio(
         )
         if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _normalize_generation_status(status)
+        payload = _normalize_generation_status(status)
+        if payload.get("status") == "pending" and payload.get("metadata", {}).get("accepted_without_task_id"):
+            follow_up = await _inspect_pending_artifacts_with_client(
+                client,
+                notebook_id,
+                "audio",
+                [artifact["id"] for artifact in baseline_artifacts],
+                timeout=_PENDING_VISIBILITY_TIMEOUT,
+                interval=_PENDING_VISIBILITY_INTERVAL,
+                task_id=payload.get("task_id"),
+            )
+            payload = _merge_pending_follow_up(payload, follow_up)
+    return payload
 
 
 async def poll_artifact(settings: Settings, notebook_id: str, task_id: str) -> dict[str, Any]:
@@ -810,6 +954,7 @@ async def generate_video(
 ) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
+        baseline_artifacts = await _list_artifacts_with_client(client, notebook_id, "video")
         status = await client.artifacts.generate_video(
             notebook_id,
             source_ids=source_ids,
@@ -820,7 +965,19 @@ async def generate_video(
         )
         if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _normalize_generation_status(status)
+        payload = _normalize_generation_status(status)
+        if payload.get("status") == "pending" and payload.get("metadata", {}).get("accepted_without_task_id"):
+            follow_up = await _inspect_pending_artifacts_with_client(
+                client,
+                notebook_id,
+                "video",
+                [artifact["id"] for artifact in baseline_artifacts],
+                timeout=_PENDING_VISIBILITY_TIMEOUT,
+                interval=_PENDING_VISIBILITY_INTERVAL,
+                task_id=payload.get("task_id"),
+            )
+            payload = _merge_pending_follow_up(payload, follow_up)
+    return payload
 
 
 async def generate_cinematic_video(
@@ -833,6 +990,7 @@ async def generate_cinematic_video(
 ) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
+        baseline_artifacts = await _list_artifacts_with_client(client, notebook_id, "video")
         status = await client.artifacts.generate_cinematic_video(
             notebook_id,
             source_ids=source_ids,
@@ -841,7 +999,19 @@ async def generate_cinematic_video(
         )
         if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _normalize_generation_status(status)
+        payload = _normalize_generation_status(status)
+        if payload.get("status") == "pending" and payload.get("metadata", {}).get("accepted_without_task_id"):
+            follow_up = await _inspect_pending_artifacts_with_client(
+                client,
+                notebook_id,
+                "video",
+                [artifact["id"] for artifact in baseline_artifacts],
+                timeout=_PENDING_VISIBILITY_TIMEOUT,
+                interval=_PENDING_VISIBILITY_INTERVAL,
+                task_id=payload.get("task_id"),
+            )
+            payload = _merge_pending_follow_up(payload, follow_up)
+    return payload
 
 
 async def generate_slide_deck(
@@ -856,6 +1026,7 @@ async def generate_slide_deck(
 ) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
+        baseline_artifacts = await _list_artifacts_with_client(client, notebook_id, "slide_deck")
         status = await client.artifacts.generate_slide_deck(
             notebook_id,
             source_ids=source_ids,
@@ -866,7 +1037,19 @@ async def generate_slide_deck(
         )
         if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _normalize_generation_status(status)
+        payload = _normalize_generation_status(status)
+        if payload.get("status") == "pending" and payload.get("metadata", {}).get("accepted_without_task_id"):
+            follow_up = await _inspect_pending_artifacts_with_client(
+                client,
+                notebook_id,
+                "slide_deck",
+                [artifact["id"] for artifact in baseline_artifacts],
+                timeout=_PENDING_VISIBILITY_TIMEOUT,
+                interval=_PENDING_VISIBILITY_INTERVAL,
+                task_id=payload.get("task_id"),
+            )
+            payload = _merge_pending_follow_up(payload, follow_up)
+    return payload
 
 
 async def revise_slide(
@@ -903,6 +1086,7 @@ async def generate_infographic(
 ) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
+        baseline_artifacts = await _list_artifacts_with_client(client, notebook_id, "infographic")
         status = await client.artifacts.generate_infographic(
             notebook_id,
             source_ids=source_ids,
@@ -914,7 +1098,19 @@ async def generate_infographic(
         )
         if wait and status.task_id:
             status = await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-    return _normalize_generation_status(status)
+        payload = _normalize_generation_status(status)
+        if payload.get("status") == "pending" and payload.get("metadata", {}).get("accepted_without_task_id"):
+            follow_up = await _inspect_pending_artifacts_with_client(
+                client,
+                notebook_id,
+                "infographic",
+                [artifact["id"] for artifact in baseline_artifacts],
+                timeout=_PENDING_VISIBILITY_TIMEOUT,
+                interval=_PENDING_VISIBILITY_INTERVAL,
+                task_id=payload.get("task_id"),
+            )
+            payload = _merge_pending_follow_up(payload, follow_up)
+    return payload
 
 
 async def generate_quiz(

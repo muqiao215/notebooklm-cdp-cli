@@ -1,4 +1,5 @@
 from click.testing import CliRunner
+from pathlib import Path
 
 from notebooklm_cdp_cli.cli import cli
 
@@ -36,3 +37,29 @@ def test_doctor_json_output(monkeypatch):
     assert result.exit_code == 0
     assert '"connected": true' in result.output
     assert '"csrf_token": "csrf123"' in result.output
+
+
+def test_generate_report_help_lists_valid_formats_and_summary_warning():
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["generate", "report", "--help"])
+    normalized = " ".join(result.output.split())
+
+    assert result.exit_code == 0
+    assert "briefing_doc" in normalized
+    assert "study_guide" in normalized
+    assert "blog_post" in normalized
+    assert "custom" in normalized
+    assert "summary is not a valid report format" in normalized
+
+
+def test_readme_makes_report_formats_explicit():
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    normalized = text.replace("`", "")
+
+    assert "briefing_doc" in normalized
+    assert "study_guide" in normalized
+    assert "blog_post" in normalized
+    assert "custom" in normalized
+    assert "summary is not a valid report format" in normalized

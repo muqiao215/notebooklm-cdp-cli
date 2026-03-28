@@ -97,6 +97,54 @@ uv run notebooklm-cdp source list --notebook <notebook-id>
 uv run notebooklm-cdp ask "Summarize the main ideas in Chinese." --notebook <notebook-id>
 ```
 
+## Report Generation
+
+Valid `generate report --format` values are:
+
+- `briefing_doc`
+- `study_guide`
+- `blog_post`
+- `custom`
+
+Use `--prompt` together with `--format custom`.
+
+`summary` is not a valid report format. If you want the notebook summary, use:
+
+```bash
+uv run notebooklm-cdp notebook summary --notebook <notebook-id>
+```
+
+Example:
+
+```bash
+uv run notebooklm-cdp generate report \
+  --notebook <notebook-id> \
+  --format briefing_doc \
+  --json
+```
+
+When a generation submit is accepted but still returns `pending`, the CLI now does
+a short best-effort artifact check and may surface a newly visible artifact ID
+immediately. If no artifact is visible yet, the response stays normalized as
+`pending` and includes concrete follow-up commands.
+
+The CLI also records pending generation submissions locally in
+`~/.notebooklm-cdp/pending_submissions.json` so they can be re-resolved later.
+This ledger captures the notebook, artifact kind, submit time, task ID state,
+source/language/options, baseline artifact IDs, and a stable prompt fingerprint.
+
+Useful follow-up commands:
+
+```bash
+uv run notebooklm-cdp artifact pending --json
+uv run notebooklm-cdp artifact resolve-pending <submission-id> --json
+```
+
+`artifact resolve-pending` only auto-resolves when there is exactly one strong
+candidate in the current artifact list for the same notebook and kind, newer
+than the submission, and not present in the recorded baseline. Otherwise it
+returns ranked candidates without claiming certainty.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

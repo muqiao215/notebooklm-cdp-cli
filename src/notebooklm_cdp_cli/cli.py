@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+import hashlib
 import json
+from uuid import uuid4
 from typing import Any
 
 import click
@@ -61,6 +64,7 @@ from .notebooklm_ops import (
     get_source,
     get_source_fulltext,
     get_source_guide,
+    inspect_pending_artifacts,
     list_artifacts,
     list_languages,
     list_notes,
@@ -94,9 +98,12 @@ from .state import (
     get_current_notebook,
     get_context_path,
     get_home_dir,
+    get_pending_submission,
     load_context,
+    list_pending_submissions,
     set_current_conversation,
     set_current_notebook,
+    upsert_pending_submission,
 )
 
 
@@ -159,6 +166,10 @@ async def bootstrap_login(
 
 
 ARTIFACT_FORMAT_CHOICES = click.Choice(["brief", "explainer", "cinematic"], case_sensitive=False)
+REPORT_FORMAT_CHOICES = click.Choice(
+    ["briefing_doc", "study_guide", "blog_post", "custom"],
+    case_sensitive=False,
+)
 VIDEO_STYLE_CHOICES = click.Choice(
     [
         "auto_select",
@@ -208,7 +219,302 @@ CHAT_RESPONSE_LENGTH_CHOICES = click.Choice(["default", "longer", "shorter"], ca
 AUDIO_FORMAT_CHOICES = click.Choice(["deep-dive", "brief", "critique", "debate"], case_sensitive=False)
 AUDIO_LENGTH_CHOICES = click.Choice(["short", "default", "long"], case_sensitive=False)
 
+_PENDING_INSPECT_TIMEOUT = 4.0
+_PENDING_INSPECT_INTERVAL = 1.0
+_DOWNLOAD_COMMANDS = {
+    "report": ("report", "./report.md"),
+    "audio": ("audio", "./audio.mp3"),
+    "video": ("video", "./video.mp4"),
+    "slide_deck": ("slide-deck", "./slides.pdf"),
+    "infographic": ("infographic", "./infographic.png"),
+    "quiz": ("quiz", "./quiz.json"),
+    "flashcards": ("flashcards", "./flashcards.json"),
+    "data_table": ("data-table", "./data-table.csv"),
+}
 
+
+def _capture_artifact_baseline(
+    settings: Settings,
+    notebook_id: str,
+    artifact_kind: str | None,
+    inspect_pending: bool,
+) -> list[str]:
+    del inspect_pending
+    if artifact_kind is None:
+        return []
+    try:
+        artifacts = _run(list_artifacts(settings, notebook_id, artifact_kind))
+    except Exception:
+        return []
+    return [artifact["id"] for artifact in artifacts if artifact.get("id")]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _utcnow_iso() -> str:
+    return _utcnow().isoformat()
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _prompt_fingerprint(
+    *,
+    instructions: str | None,
+    custom_prompt: str | None,
+    extra_instructions: str | None,
+    baseline_artifact_ids: list[str],
+) -> str:
+    payload = {
+        "instructions": instructions,
+        "custom_prompt": custom_prompt,
+        "extra_instructions": extra_instructions,
+        "baseline_artifact_ids": list(baseline_artifact_ids),
+    }
+    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _record_pending_submission(
+    payload: dict[str, Any],
+    *,
+    notebook_id: str,
+    artifact_kind: str,
+    submission_kind: str,
+    baseline_artifact_ids: list[str],
+    language: str | None,
+    source_ids: list[str],
+    format_value: str | None = None,
+    style: str | None = None,
+    detail: str | None = None,
+    length: str | None = None,
+    orientation: str | None = None,
+    instructions: str | None = None,
+    custom_prompt: str | None = None,
+    extra_instructions: str | None = None,
+) -> dict[str, Any]:
+    if payload.get("status") != "pending":
+        return payload
+
+    submitted_at = _utcnow_iso()
+    artifact_id = payload.get("artifact_id")
+    entry = {
+        "submission_id": uuid4().hex,
+        "notebook_id": notebook_id,
+        "artifact_kind": artifact_kind,
+        "submission_kind": submission_kind,
+        "submitted_at": submitted_at,
+        "task_id": payload.get("task_id"),
+        "accepted_without_task_id": bool((payload.get("metadata") or {}).get("accepted_without_task_id")),
+        "source_ids": list(source_ids),
+        "language": language,
+        "format": format_value,
+        "style": style,
+        "detail": detail,
+        "length": length,
+        "orientation": orientation,
+        "prompt_fingerprint": _prompt_fingerprint(
+            instructions=instructions,
+            custom_prompt=custom_prompt,
+            extra_instructions=extra_instructions,
+            baseline_artifact_ids=baseline_artifact_ids,
+        ),
+        "baseline_artifact_ids": list(baseline_artifact_ids),
+        "resolution_status": "resolved" if artifact_id else "pending",
+    }
+    if artifact_id:
+        entry["resolved_artifact_id"] = artifact_id
+        entry["resolved_at"] = submitted_at
+
+    upsert_pending_submission(entry)
+
+    enriched = dict(payload)
+    enriched["submission_id"] = entry["submission_id"]
+    enriched["resolution_status"] = entry["resolution_status"]
+    next_steps = list(enriched.get("next_steps") or [])
+    for step in (f"artifact resolve-pending {entry['submission_id']}", "artifact pending"):
+        if step not in next_steps:
+            next_steps.append(step)
+    if next_steps:
+        enriched["next_steps"] = next_steps
+    return enriched
+
+
+def _filter_submission_records(
+    submissions: list[dict[str, Any]],
+    *,
+    notebook_id: str,
+    artifact_kind: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        submission
+        for submission in submissions
+        if submission.get("notebook_id") == notebook_id
+        and (artifact_kind is None or submission.get("artifact_kind") == artifact_kind)
+    ]
+
+
+def _rank_submission_candidates(
+    submission: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    artifact_kind = submission.get("artifact_kind")
+    submitted_at = _parse_timestamp(submission.get("submitted_at"))
+    baseline_ids = set(submission.get("baseline_artifact_ids", []))
+    ranked: list[tuple[int, datetime, str, dict[str, Any]]] = []
+
+    for artifact in artifacts:
+        artifact_id = artifact.get("id")
+        if not artifact_id or artifact.get("kind") != artifact_kind or artifact_id in baseline_ids:
+            continue
+        created_at = _parse_timestamp(artifact.get("created_at"))
+        strong_candidate = bool(
+            created_at is not None and submitted_at is not None and created_at > submitted_at
+        )
+        if strong_candidate:
+            reasons = [
+                "same_notebook_and_kind",
+                "created_after_submission",
+                "not_in_baseline",
+            ]
+        elif created_at is None:
+            reasons = [
+                "same_notebook_and_kind",
+                "created_at_missing",
+                "not_in_baseline",
+            ]
+        else:
+            reasons = [
+                "same_notebook_and_kind",
+                "created_not_after_submission",
+                "not_in_baseline",
+            ]
+
+        sort_created_at = created_at or datetime.min.replace(tzinfo=timezone.utc)
+        ranked.append(
+            (
+                1 if strong_candidate else 0,
+                sort_created_at,
+                artifact_id,
+                {
+                    "artifact": artifact,
+                    "strong_candidate": strong_candidate,
+                    "seconds_after_submission": (
+                        int((created_at - submitted_at).total_seconds())
+                        if strong_candidate and created_at is not None and submitted_at is not None
+                        else None
+                    ),
+                    "reasons": reasons,
+                },
+            )
+        )
+
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    return [candidate for *_prefix, candidate in ranked]
+
+
+def _pending_next_steps(artifact_kind: str, task_id: str | None, artifact_id: str | None) -> list[str]:
+    download_command, example_path = _DOWNLOAD_COMMANDS.get(
+        artifact_kind,
+        (artifact_kind.replace("_", "-"), "./artifact.out"),
+    )
+    if artifact_id:
+        return [
+            f"artifact get {artifact_id}",
+            f"download {download_command} {example_path} --artifact-id {artifact_id}",
+        ]
+    if task_id:
+        return [
+            f"artifact wait {task_id}",
+            f"artifact list --kind {artifact_kind}",
+        ]
+    return [
+        f"artifact list --kind {artifact_kind}",
+        f"download {download_command} {example_path} --artifact-id <artifact-id>",
+    ]
+
+
+def _pending_message(artifact_kind: str, task_id: str | None, artifact_id: str | None) -> str:
+    readable_kind = artifact_kind.replace("_", " ")
+    if artifact_id:
+        return f"Generation is still pending, but {readable_kind} artifact {artifact_id} is already visible."
+    if task_id:
+        return f"Generation is still pending. Wait on task {task_id} or re-list {readable_kind} artifacts."
+    return (
+        f"Generation was accepted without a task ID. No new {readable_kind} artifact is visible yet."
+    )
+
+
+def _finalize_pending_generation_payload(
+    settings: Settings,
+    notebook_id: str,
+    artifact_kind: str | None,
+    baseline_artifact_ids: list[str] | None,
+    payload: dict[str, Any],
+    inspect_pending: bool,
+) -> dict[str, Any]:
+    if not inspect_pending or artifact_kind is None or payload.get("status") != "pending":
+        return payload
+
+    follow_up: dict[str, Any] = {
+        "checked": False,
+        "artifact_kind": artifact_kind,
+        "artifact_visible": False,
+        "visible_artifacts": [],
+    }
+    if baseline_artifact_ids is None:
+        follow_up["inspect_error"] = "Artifact inspection baseline was unavailable."
+    else:
+        try:
+            follow_up = _run(
+                inspect_pending_artifacts(
+                    settings,
+                    notebook_id,
+                    artifact_kind,
+                    baseline_artifact_ids,
+                    timeout=_PENDING_INSPECT_TIMEOUT,
+                    interval=_PENDING_INSPECT_INTERVAL,
+                )
+            )
+        except Exception as exc:
+            follow_up.update({"inspect_error": str(exc)})
+
+    visible_artifact = follow_up.get("visible_artifact")
+    artifact_id = visible_artifact.get("id") if isinstance(visible_artifact, dict) else None
+    follow_up["next_steps"] = _pending_next_steps(artifact_kind, payload.get("task_id"), artifact_id)
+    payload["pending_follow_up"] = follow_up
+    payload["next_steps"] = follow_up["next_steps"]
+    payload["message"] = _pending_message(artifact_kind, payload.get("task_id"), artifact_id)
+
+    metadata = dict(payload.get("metadata") or {})
+    if artifact_id:
+        payload["artifact_id"] = artifact_id
+        payload["visible_artifact"] = visible_artifact
+        metadata["tracking_hint"] = (
+            f"Artifact {artifact_id} is already visible. Use artifact get or download with --artifact-id."
+        )
+    elif payload.get("task_id"):
+        metadata["tracking_hint"] = (
+            f"Use artifact wait {payload['task_id']} or artifact list --kind {artifact_kind}."
+        )
+    else:
+        metadata["tracking_hint"] = (
+            f"No task_id was returned. Re-run artifact list --kind {artifact_kind} until the artifact appears."
+        )
+    payload["metadata"] = metadata
+    return payload
 @click.group()
 @click.option("--host", default=None, help="Chrome remote debugging host")
 @click.option("--port", default=None, type=int, help="Chrome remote debugging port")
@@ -1212,6 +1518,104 @@ def artifact_wait(
     _emit(payload, json_output)
 
 
+@artifact_group.command("pending")
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--kind", default=None, help="Artifact kind filter, e.g. report, audio")
+@click.option("--include-resolved", is_flag=True, help="Include resolved ledger entries")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def artifact_pending(
+    ctx: click.Context,
+    notebook_id: str | None,
+    kind: str | None,
+    include_resolved: bool,
+    json_output: bool,
+) -> None:
+    """List pending-generation ledger entries for the current notebook."""
+    resolved = _require_notebook(notebook_id)
+    submissions = _filter_submission_records(
+        list_pending_submissions(include_resolved=include_resolved),
+        notebook_id=resolved,
+        artifact_kind=kind,
+    )
+    payload = {"notebook_id": resolved, "count": len(submissions), "submissions": submissions}
+    _emit(payload, json_output)
+
+
+artifact_group.add_command(
+    click.Command(
+        name="pending-list",
+        callback=artifact_pending.callback,
+        params=list(artifact_pending.params),
+        help="Alias for artifact pending.",
+    )
+)
+
+
+@artifact_group.command("resolve-pending")
+@click.argument("submission_id")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def artifact_resolve_pending(
+    ctx: click.Context,
+    submission_id: str,
+    json_output: bool,
+) -> None:
+    """Resolve one ledgered pending generation against the current artifact list."""
+    settings = _settings_from_ctx(ctx)
+    submission = get_pending_submission(submission_id)
+    if submission is None:
+        raise click.ClickException(f"Pending submission not found: {submission_id}")
+
+    if submission.get("resolution_status") == "resolved" and submission.get("resolved_artifact_id"):
+        payload = {
+            "status": "resolved",
+            "resolution_status": "resolved",
+            "already_resolved": True,
+            "artifact_id": submission["resolved_artifact_id"],
+            "artifact": {"id": submission["resolved_artifact_id"]},
+            "submission": submission,
+        }
+        _emit(payload, json_output)
+        return
+
+    artifacts = _run(list_artifacts(settings, submission["notebook_id"], submission["artifact_kind"]))
+    candidates = _rank_submission_candidates(submission, artifacts)
+
+    updated_submission = dict(submission)
+    if len(candidates) == 1 and candidates[0].get("strong_candidate"):
+        artifact = candidates[0]["artifact"]
+        updated_submission["resolution_status"] = "resolved"
+        updated_submission["resolved_artifact_id"] = artifact["id"]
+        updated_submission["resolved_at"] = _utcnow_iso()
+        upsert_pending_submission(updated_submission)
+        payload = {
+            "status": "resolved",
+            "resolution_status": "resolved",
+            "already_resolved": False,
+            "artifact_id": artifact["id"],
+            "artifact": artifact,
+            "candidate_count": 1,
+            "candidates": candidates,
+            "submission": updated_submission,
+        }
+        _emit(payload, json_output)
+        return
+
+    updated_submission["resolution_status"] = "ambiguous" if candidates else "pending"
+    upsert_pending_submission(updated_submission)
+    payload = {
+        "status": "unresolved",
+        "resolution_status": "ambiguous" if len(candidates) > 1 else "pending",
+        "artifact_id": None,
+        "artifact": None,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "submission": updated_submission,
+    }
+    _emit(payload, json_output)
+
+
 @artifact_group.command("suggest-reports")
 @click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
@@ -1235,12 +1639,29 @@ def generate_group() -> None:
 
 @generate_group.command("report")
 @click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
-@click.option("--format", "report_format", default="briefing_doc", help="Report format")
-@click.option("--prompt", "custom_prompt", default=None, help="Custom prompt for custom reports")
+@click.option(
+    "--format",
+    "report_format",
+    default="briefing_doc",
+    type=REPORT_FORMAT_CHOICES,
+    show_default=True,
+    help="Report format: briefing_doc|study_guide|blog_post|custom",
+)
+@click.option(
+    "--prompt",
+    "custom_prompt",
+    default=None,
+    help="Only used with --format custom",
+)
 @click.option("--instructions", "extra_instructions", default=None, help="Additional report instructions")
 @click.option("--language", default=None, help="Per-command output language")
 @click.option("--source", "source_ids", multiple=True, help="Restrict to specific source IDs")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_report_cmd(
@@ -1252,10 +1673,13 @@ def generate_report_cmd(
     language: str | None,
     source_ids: tuple[str, ...],
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
+    """Valid report formats: briefing_doc, study_guide, blog_post, custom; summary is not a valid report format."""
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "report", inspect_pending)
     if extra_instructions is None and language is None and not source_ids:
         payload = _run(generate_report(settings, resolved, report_format, custom_prompt, wait))
     else:
@@ -1271,6 +1695,30 @@ def generate_report_cmd(
                 wait=wait,
             )
         )
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "report",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
+    payload = _record_pending_submission(
+        payload=payload,
+        notebook_id=resolved,
+        artifact_kind="report",
+        submission_kind="report",
+        baseline_artifact_ids=baseline_artifact_ids,
+        source_ids=list(source_ids),
+        language=language or "en",
+        format_value=report_format,
+        style=None,
+        detail=None,
+        length=None,
+        orientation=None,
+        custom_prompt=custom_prompt,
+        extra_instructions=extra_instructions,
+    )
     _emit(payload, json_output)
 
 
@@ -1282,6 +1730,11 @@ def generate_report_cmd(
 @click.option("--format", "audio_format", default=None, type=AUDIO_FORMAT_CHOICES, help="Audio format")
 @click.option("--length", "audio_length", default=None, type=AUDIO_LENGTH_CHOICES, help="Audio length")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_audio_cmd(
@@ -1293,10 +1746,12 @@ def generate_audio_cmd(
     audio_format: str | None,
     audio_length: str | None,
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "audio", inspect_pending)
     if language is None and not source_ids and audio_format is None and audio_length is None:
         payload = _run(generate_audio(settings, resolved, instructions, wait))
     else:
@@ -1312,6 +1767,29 @@ def generate_audio_cmd(
                 wait=wait,
             )
         )
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "audio",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
+    payload = _record_pending_submission(
+        payload=payload,
+        notebook_id=resolved,
+        artifact_kind="audio",
+        submission_kind="audio",
+        baseline_artifact_ids=baseline_artifact_ids,
+        source_ids=list(source_ids),
+        language=language or "en",
+        format_value=audio_format,
+        style=None,
+        detail=None,
+        length=audio_length,
+        orientation=None,
+        instructions=instructions,
+    )
     _emit(payload, json_output)
 
 
@@ -1323,6 +1801,11 @@ def generate_audio_cmd(
 @click.option("--language", default=None, help="Per-command output language")
 @click.option("--source", "source_ids", multiple=True, help="Restrict to specific source IDs")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_video_cmd(
@@ -1334,10 +1817,12 @@ def generate_video_cmd(
     language: str | None,
     source_ids: tuple[str, ...],
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "video", inspect_pending)
     if language is None and not source_ids:
         payload = _run(generate_video(settings, resolved, instructions, video_format, style, wait))
     else:
@@ -1353,6 +1838,29 @@ def generate_video_cmd(
                 wait=wait,
             )
         )
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "video",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
+    payload = _record_pending_submission(
+        payload=payload,
+        notebook_id=resolved,
+        artifact_kind="video",
+        submission_kind="video",
+        baseline_artifact_ids=baseline_artifact_ids,
+        source_ids=list(source_ids),
+        language=language or "en",
+        format_value=video_format,
+        style=style,
+        detail=None,
+        length=None,
+        orientation=None,
+        instructions=instructions,
+    )
     _emit(payload, json_output)
 
 
@@ -1362,6 +1870,11 @@ def generate_video_cmd(
 @click.option("--language", default=None, help="Per-command output language")
 @click.option("--source", "source_ids", multiple=True, help="Restrict to specific source IDs")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_cinematic_video_cmd(
@@ -1371,10 +1884,12 @@ def generate_cinematic_video_cmd(
     language: str | None,
     source_ids: tuple[str, ...],
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "video", inspect_pending)
     if language is None and not source_ids:
         payload = _run(generate_cinematic_video(settings, resolved, instructions, wait))
     else:
@@ -1388,6 +1903,29 @@ def generate_cinematic_video_cmd(
                 wait=wait,
             )
         )
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "video",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
+    payload = _record_pending_submission(
+        payload=payload,
+        notebook_id=resolved,
+        artifact_kind="video",
+        submission_kind="cinematic-video",
+        baseline_artifact_ids=baseline_artifact_ids,
+        source_ids=list(source_ids),
+        language=language or "en",
+        format_value="cinematic",
+        style=None,
+        detail=None,
+        length=None,
+        orientation=None,
+        instructions=instructions,
+    )
     _emit(payload, json_output)
 
 
@@ -1399,6 +1937,11 @@ def generate_cinematic_video_cmd(
 @click.option("--language", default=None, help="Per-command output language")
 @click.option("--source", "source_ids", multiple=True, help="Restrict to specific source IDs")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_slide_deck_cmd(
@@ -1410,10 +1953,12 @@ def generate_slide_deck_cmd(
     language: str | None,
     source_ids: tuple[str, ...],
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "slide_deck", inspect_pending)
     if language is None and not source_ids:
         payload = _run(generate_slide_deck(settings, resolved, instructions, slide_format, length, wait))
     else:
@@ -1429,6 +1974,29 @@ def generate_slide_deck_cmd(
                 wait=wait,
             )
         )
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "slide_deck",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
+    payload = _record_pending_submission(
+        payload=payload,
+        notebook_id=resolved,
+        artifact_kind="slide_deck",
+        submission_kind="slide-deck",
+        baseline_artifact_ids=baseline_artifact_ids,
+        source_ids=list(source_ids),
+        language=language or "en",
+        format_value=slide_format,
+        style=None,
+        detail=None,
+        length=length,
+        orientation=None,
+        instructions=instructions,
+    )
     _emit(payload, json_output)
 
 
@@ -1438,6 +2006,11 @@ def generate_slide_deck_cmd(
 @click.argument("prompt")
 @click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_revise_slide_cmd(
@@ -1447,11 +2020,21 @@ def generate_revise_slide_cmd(
     prompt: str,
     notebook_id: str | None,
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "slide_deck", inspect_pending)
     payload = _run(revise_slide(settings, resolved, artifact_id, slide_index, prompt, wait))
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "slide_deck",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
     _emit(payload, json_output)
 
 
@@ -1464,6 +2047,11 @@ def generate_revise_slide_cmd(
 @click.option("--language", default=None, help="Per-command output language")
 @click.option("--source", "source_ids", multiple=True, help="Restrict to specific source IDs")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_infographic_cmd(
@@ -1476,10 +2064,12 @@ def generate_infographic_cmd(
     language: str | None,
     source_ids: tuple[str, ...],
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "infographic", inspect_pending)
     if language is None and not source_ids:
         payload = _run(
             generate_infographic(settings, resolved, instructions, orientation, detail, style, wait)
@@ -1498,6 +2088,29 @@ def generate_infographic_cmd(
                 wait=wait,
             )
         )
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "infographic",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
+    payload = _record_pending_submission(
+        payload=payload,
+        notebook_id=resolved,
+        artifact_kind="infographic",
+        submission_kind="infographic",
+        baseline_artifact_ids=baseline_artifact_ids,
+        source_ids=list(source_ids),
+        language=language or "en",
+        format_value=None,
+        style=style,
+        detail=detail,
+        length=None,
+        orientation=orientation,
+        instructions=instructions,
+    )
     _emit(payload, json_output)
 
 
@@ -1507,6 +2120,11 @@ def generate_infographic_cmd(
 @click.option("--quantity", default=None, type=QUIZ_QUANTITY_CHOICES, help="Quiz size")
 @click.option("--difficulty", default=None, type=QUIZ_DIFFICULTY_CHOICES, help="Quiz difficulty")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_quiz_cmd(
@@ -1516,11 +2134,21 @@ def generate_quiz_cmd(
     quantity: str | None,
     difficulty: str | None,
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "quiz", inspect_pending)
     payload = _run(generate_quiz(settings, resolved, instructions, quantity, difficulty, wait))
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "quiz",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
     _emit(payload, json_output)
 
 
@@ -1530,6 +2158,11 @@ def generate_quiz_cmd(
 @click.option("--quantity", default=None, type=QUIZ_QUANTITY_CHOICES, help="Flashcard set size")
 @click.option("--difficulty", default=None, type=QUIZ_DIFFICULTY_CHOICES, help="Flashcard difficulty")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_flashcards_cmd(
@@ -1539,11 +2172,21 @@ def generate_flashcards_cmd(
     quantity: str | None,
     difficulty: str | None,
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "flashcards", inspect_pending)
     payload = _run(generate_flashcards(settings, resolved, instructions, quantity, difficulty, wait))
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "flashcards",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
     _emit(payload, json_output)
 
 
@@ -1551,6 +2194,11 @@ def generate_flashcards_cmd(
 @click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
 @click.option("--instructions", default=None, help="Describe the desired table")
 @click.option("--wait/--no-wait", default=False, help="Wait for completion")
+@click.option(
+    "--inspect-pending/--no-inspect-pending",
+    default=True,
+    help="Attempt a short artifact-list follow-up when submit returns pending.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON")
 @click.pass_context
 def generate_data_table_cmd(
@@ -1558,11 +2206,21 @@ def generate_data_table_cmd(
     notebook_id: str | None,
     instructions: str | None,
     wait: bool,
+    inspect_pending: bool,
     json_output: bool,
 ) -> None:
     settings = _settings_from_ctx(ctx)
     resolved = _require_notebook(notebook_id)
+    baseline_artifact_ids = _capture_artifact_baseline(settings, resolved, "data_table", inspect_pending)
     payload = _run(generate_data_table(settings, resolved, instructions, wait))
+    payload = _finalize_pending_generation_payload(
+        settings,
+        resolved,
+        "data_table",
+        baseline_artifact_ids,
+        payload,
+        inspect_pending,
+    )
     _emit(payload, json_output)
 
 
