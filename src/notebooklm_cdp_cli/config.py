@@ -40,7 +40,6 @@ def default_user_data_dir_candidates() -> list[str]:
         candidates.append(env_path)
     candidates.extend(
         [
-            "/root/.browser-login/google-chrome-user-data",
             str(Path.home() / ".config" / "google-chrome"),
             str(Path.home() / ".config" / "chromium"),
         ]

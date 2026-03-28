@@ -1,4 +1,4 @@
-from notebooklm_cdp_cli.config import Settings
+from notebooklm_cdp_cli.config import Settings, default_user_data_dir_candidates
 
 
 def test_settings_default_values():
@@ -20,3 +20,19 @@ def test_settings_respects_environment(monkeypatch):
     assert settings.port == 3333
     assert settings.timeout == 9.5
 
+
+def test_default_user_data_dir_candidates_excludes_environment_specific_hardcoded_path(monkeypatch):
+    monkeypatch.delenv("NOTEBOOKLM_CDP_USER_DATA_DIR", raising=False)
+
+    candidates = default_user_data_dir_candidates()
+
+    assert "/root/.browser-login/google-chrome-user-data" not in candidates
+
+
+def test_default_user_data_dir_candidates_prefers_explicit_env_path(monkeypatch):
+    monkeypatch.setenv("NOTEBOOKLM_CDP_USER_DATA_DIR", "/profiles/explicit")
+
+    candidates = default_user_data_dir_candidates()
+
+    assert candidates[0] == "/profiles/explicit"
+    assert "/profiles/explicit" in candidates
