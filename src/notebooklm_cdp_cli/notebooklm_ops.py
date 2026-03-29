@@ -392,7 +392,12 @@ def _is_paywall_host(host: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in KNOWN_PAYWALL_DOMAINS)
 
 
-async def _precheck_url(client: httpx.AsyncClient, url: str) -> tuple[bool, str, str]:
+async def _precheck_url(
+    client: httpx.AsyncClient,
+    url: str,
+    skip_paywall: bool = True,
+    skip_feed: bool = True,
+) -> tuple[bool, str, str]:
     """Check a URL is reachable and likely an article (not RSS/paywall redirect).
 
     Returns:
@@ -402,10 +407,11 @@ async def _precheck_url(client: httpx.AsyncClient, url: str) -> tuple[bool, str,
     """
     host = url.split("/")[2] if "://" in url else url
 
-    # Skip known non-article feeds
-    if any(x in url for x in ["/feeds/", "feedburner", "/rss", "atom.xml", "/comments/default"]):
+    # Skip known non-article feeds — controlled by skip_feed flag
+    if skip_feed and any(x in url for x in ["/feeds/", "feedburner", "/rss", "atom.xml", "/comments/default"]):
         return True, "feed", url
-    if _is_paywall_host(host):
+    # Skip known paywall domains — controlled by skip_paywall flag
+    if skip_paywall and _is_paywall_host(host):
         return True, "paywall", url
 
     try:
@@ -459,7 +465,7 @@ async def add_source_url_batch(
         # --- Pre-check phase ---
         prechecked: list[tuple[str, bool, str]] = []
         for url in urls:
-            skip, reason, _ = await _precheck_url(http, url)
+            skip, reason, _ = await _precheck_url(http, url, skip_paywall, skip_feed)
             prechecked.append((url, skip, reason))
     finally:
         await http.aclose()
