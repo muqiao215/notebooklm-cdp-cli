@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import asdict
 from typing import Any
 
+import httpx
 from notebooklm.client import NotebookLMClient
 from notebooklm.cli.language import SUPPORTED_LANGUAGES
 from notebooklm.rpc import (
@@ -336,11 +337,161 @@ async def list_sources(settings: Settings, notebook_id: str) -> list[dict[str, A
     return [_source_to_dict(source) for source in sources]
 
 
-async def add_source_url(settings: Settings, notebook_id: str, url: str, wait: bool) -> dict[str, Any]:
+async def add_source_url(settings: Settings, notebook_id: str, url: str, wait: bool, timeout: float = 30.0) -> dict[str, Any]:
     auth = await AuthService(settings).notebooklm_auth()
     async with NotebookLMClient(auth) as client:
         source = await client.sources.add_url(notebook_id, url, wait=wait)
     return _source_to_dict(source)
+
+
+# Known paywall / non-article domains — pre-check will skip these by default.
+KNOWN_PAYWALL_DOMAINS = frozenset([
+    "nytimes.com",
+    "ft.com",
+    "wsj.com",
+    "economist.com",
+    "theinformation.com",
+    "fastcompany.com",
+    "businessinsider.com",
+    "bloomberg.com",
+    "medium.com",          # paywalled articles common
+    "substack.com",         # paywalled posts common
+    "wired.com",
+    "arstechnica.com",
+])
+
+
+def _classify_error(url: str, exc: Exception) -> tuple[str, str]:
+    """Classify an add-source error into a category and user-facing message."""
+    cause = exc
+    while cause.__cause__:
+        cause = cause.__cause__
+
+    msg = str(cause).lower()
+
+    # Timeout
+    if "timeout" in msg or isinstance(cause, asyncio.TimeoutError):
+        return "timeout", f"Request timed out (server slow or unreachable)"
+    # Rate limit
+    if "429" in msg or "rate limit" in msg:
+        return "rate_limit", f"Rate limited by NotebookLM"
+    # Duplicate / already exists (null result from server)
+    if "null result" in msg:
+        return "duplicate", f"URL already in notebook (or server rejected)"
+    # Content / parse error
+    if "parse" in msg or "empty" in msg:
+        return "content", f"Server could not parse content"
+    # Network
+    if "network" in msg or "connection" in msg or "refused" in msg:
+        return "unreachable", f"Could not reach URL"
+    return "unknown", str(cause)
+
+
+def _is_paywall_host(host: str) -> bool:
+    """Check if host matches a paywall domain exactly or as a subdomain."""
+    return any(host == d or host.endswith("." + d) for d in KNOWN_PAYWALL_DOMAINS)
+
+
+async def _precheck_url(client: httpx.AsyncClient, url: str) -> tuple[bool, str, str]:
+    """Check a URL is reachable and likely an article (not RSS/paywall redirect).
+
+    Returns:
+        (should_skip, reason, final_url)
+        should_skip=False means URL looks good.
+        should_skip=True means reason explains why.
+    """
+    host = url.split("/")[2] if "://" in url else url
+
+    # Skip known non-article feeds
+    if any(x in url for x in ["/feeds/", "feedburner", "/rss", "atom.xml", "/comments/default"]):
+        return True, "feed", url
+    if _is_paywall_host(host):
+        return True, "paywall", url
+
+    try:
+        response = await client.head(url, timeout=httpx.Timeout(5.0), follow_redirects=True)
+        content_type = response.headers.get("content-type", "").lower()
+        # Skip non-HTML
+        if content_type and "text/html" not in content_type and "application/xhtml" not in content_type:
+            return True, f"not_article ({content_type})", url
+        # Skip non-200
+        if response.status_code >= 400:
+            return True, f"http_{response.status_code}", url
+        return False, "", url
+    except httpx.TimeoutException:
+        # HEAD timeout — still try the full add (NotebookLM might have better access)
+        return False, "", url
+    except httpx.HTTPError as e:
+        return True, f"unreachable ({e})", url
+
+
+async def add_source_url_batch(
+    settings: Settings,
+    notebook_id: str,
+    urls: list[str],
+    wait: bool,
+    max_concurrency: int = 5,
+    skip_paywall: bool = True,
+    skip_feed: bool = True,
+    retry_count: int = 2,
+    retry_timeouts: tuple[float, ...] = (10.0, 25.0),
+) -> list[dict[str, Any]]:
+    """Add multiple URLs with pre-check, smart retries, and error classification.
+
+    Args:
+        settings: Connection settings.
+        notebook_id: Target notebook.
+        urls: List of URLs to add.
+        wait: Wait for each source to finish processing.
+        max_concurrency: Max simultaneous requests.
+        skip_paywall: Skip known paywall domains (default True).
+        skip_feed: Skip RSS/Atom feed URLs (default True).
+        retry_count: Max retries per URL on timeout (default 2).
+        retry_timeouts: Timeout per retry attempt (default 10s, 25s).
+
+    Returns:
+        List of result dicts. Each dict always contains 'url' and 'status'.
+        'status' is 'success', 'skipped', or 'error'.
+        Skipped entries include 'reason'. Error entries include 'category' and 'message'.
+    """
+    http = httpx.AsyncClient(timeout=httpx.Timeout(5.0), follow_redirects=True)
+    try:
+        # --- Pre-check phase ---
+        prechecked: list[tuple[str, bool, str]] = []
+        for url in urls:
+            skip, reason, _ = await _precheck_url(http, url)
+            prechecked.append((url, skip, reason))
+    finally:
+        await http.aclose()
+
+    # Filter
+    to_add = [(url, reason) for url, skip, reason in prechecked if not skip]
+    skipped = [(url, reason) for url, skip, reason in prechecked if skip]
+
+    # --- Add phase with bounded concurrency ---
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _add_one_with_retry(url: str) -> dict[str, Any]:
+        async with semaphore:
+            for attempt in range(retry_count + 1):
+                timeout = retry_timeouts[attempt] if attempt < len(retry_timeouts) else retry_timeouts[-1]
+                try:
+                    result = await add_source_url(settings, notebook_id, url, wait=wait, timeout=timeout)
+                    return {"url": url, "status": "success", **result}
+                except Exception as exc:
+                    if attempt == retry_count:
+                        category, message = _classify_error(url, exc)
+                        return {"url": url, "status": "error", "category": category, "message": message}
+                    await asyncio.sleep(0.5 * (attempt + 1))  # brief back-off
+
+    import_results = await asyncio.gather(*[_add_one_with_retry(url) for url, _ in to_add])
+
+    # --- Assemble final results ---
+    results: list[dict[str, Any]] = []
+    for url, reason in skipped:
+        results.append({"url": url, "status": "skipped", "reason": reason})
+    results.extend(import_results)
+    return results
 
 
 async def add_source_file(

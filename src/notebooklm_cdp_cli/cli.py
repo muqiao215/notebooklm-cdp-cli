@@ -21,6 +21,7 @@ from .notebooklm_ops import (
     add_source_file,
     add_source_text,
     add_source_url,
+    add_source_url_batch,
     ask_question,
     configure_chat,
     create_notebook,
@@ -846,6 +847,83 @@ def source_add_url(
     resolved = _require_notebook(notebook_id)
     payload = _run(add_source_url(settings, resolved, url, wait))
     _emit(payload, json_output)
+
+
+@source_group.command("add-urls")
+@click.argument("urls", nargs=-1, required=False)
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--wait/--no-wait", default=True, help="Wait for source processing")
+@click.option("--from-file", "from_file", default=None, type=click.Path(exists=True), help="Read URLs from a file (one per line) or JSON array")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.option("--workers", default=5, type=int, help="Max concurrent requests")
+@click.option("--skip-paywall/--no-skip-paywall", default=True, help="Skip known paywall domains (default: skip)")
+@click.option("--skip-feed/--no-skip-feed", default=True, help="Skip RSS/Atom feed URLs (default: skip)")
+@click.option("--retry", default=2, type=int, help="Max retries per URL on timeout (default: 2)")
+@click.pass_context
+def source_add_urls(
+    ctx: click.Context,
+    urls: tuple[str, ...],
+    notebook_id: str | None,
+    wait: bool,
+    from_file: str | None,
+    json_output: bool,
+    workers: int,
+    skip_paywall: bool,
+    skip_feed: bool,
+    retry: int,
+) -> None:
+    settings = _settings_from_ctx(ctx)
+    resolved = _require_notebook(notebook_id)
+
+    # Collect URLs
+    url_list: list[str] = list(urls)
+    if from_file:
+        import json as _json
+        with open(from_file) as f:
+            content = f.read().strip()
+        # Try JSON array first
+        try:
+            parsed = _json.loads(content)
+            if isinstance(parsed, list):
+                url_list.extend(str(u) for u in parsed)
+            else:
+                click.echo(f"Warning: --from-file JSON is not a list, treating as plain text", err=True)
+                url_list.extend(content.splitlines())
+        except _json.JSONDecodeError:
+            url_list.extend(line.strip() for line in content.splitlines() if line.strip())
+
+    if not url_list:
+        click.echo("No URLs provided. Use positional args or --from-file.", err=True)
+        return
+
+    click.echo(f"Pre-checking + adding {len(url_list)} URLs to notebook {resolved} ...")
+    payload = _run(add_source_url_batch(
+        settings, resolved, url_list,
+        wait=wait,
+        max_concurrency=workers,
+        skip_paywall=skip_paywall,
+        skip_feed=skip_feed,
+        retry_count=max(0, retry),
+    ))
+
+    if json_output:
+        _emit(payload, True)
+        return
+
+    success = [r for r in payload if r["status"] == "success"]
+    skipped = [r for r in payload if r["status"] == "skipped"]
+    errors = [r for r in payload if r["status"] == "error"]
+
+    click.echo(f"\n✓ {len(success)} added  ✗ {len(errors)} failed  ⊘ {len(skipped)} skipped")
+
+    for r in errors:
+        click.echo(f"  [FAIL][{r['category']}] {r['url']}: {r['message']}")
+
+    for r in skipped:
+        click.echo(f"  [SKIP][{r['reason']}] {r['url']}")
+
+    for r in success:
+        click.echo(f"  [OK]   {r.get('title', r.get('url'))}")
 
 
 @source_group.command("add-file")
