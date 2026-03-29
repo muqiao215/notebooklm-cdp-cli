@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from notebooklm.client import NotebookLMClient
@@ -1352,16 +1353,294 @@ async def download_report(
     return {"output_path": path}
 
 
+async def _extract_audio_url(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_id: str | None,
+) -> tuple[str, str]:
+    """Extract signed audio URL from notebook artifact.
+
+    Returns:
+        Tuple of (artifact_id, signed_url).
+    """
+    from notebooklm.rpc import ArtifactStatus, ArtifactTypeCode
+
+    artifacts_data = await client.artifacts._list_raw(notebook_id)
+    audio_candidates = [
+        a
+        for a in artifacts_data
+        if isinstance(a, list)
+        and len(a) > 4
+        and a[2] == ArtifactTypeCode.AUDIO.value
+        and a[4] == ArtifactStatus.COMPLETED.value
+    ]
+
+    if artifact_id:
+        audio_art = next((a for a in audio_candidates if a[0] == artifact_id), None)
+        if not audio_art:
+            raise ValueError(f"Audio artifact {artifact_id} not found or not ready")
+    else:
+        audio_art = audio_candidates[0] if audio_candidates else None
+
+    if not audio_art:
+        raise ValueError("No completed audio artifacts found")
+
+    # Extract URL from metadata[6][5]
+    if len(audio_art) <= 6:
+        raise ValueError("Invalid audio artifact structure")
+    metadata = audio_art[6]
+    if not isinstance(metadata, list) or len(metadata) <= 5:
+        raise ValueError("Invalid audio metadata structure")
+
+    media_list = metadata[5]
+    if not isinstance(media_list, list) or len(media_list) == 0:
+        raise ValueError("No media URLs found in audio artifact")
+
+    # Prefer audio/mp4, fall back to first URL
+    url = None
+    for item in media_list:
+        if isinstance(item, list) and len(item) > 2 and item[2] == "audio/mp4":
+            url = item[0]
+            break
+
+    if not url and isinstance(media_list[0], list):
+        url = media_list[0][0]
+
+    if not url:
+        raise ValueError("Could not extract audio download URL")
+    return audio_art[0], url
+
+
+async def _extract_infographic_url(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_id: str | None,
+) -> tuple[str, str]:
+    """Extract signed infographic URL from notebook artifact.
+
+    Returns:
+        Tuple of (artifact_id, signed_url).
+    """
+    from notebooklm.rpc import ArtifactStatus, ArtifactTypeCode
+
+    artifacts_data = await client.artifacts._list_raw(notebook_id)
+    info_candidates = [
+        a
+        for a in artifacts_data
+        if isinstance(a, list)
+        and len(a) > 4
+        and a[2] == ArtifactTypeCode.INFOGRAPHIC.value
+        and a[4] == ArtifactStatus.COMPLETED.value
+    ]
+
+    if artifact_id:
+        info_art = next((i for i in info_candidates if i[0] == artifact_id), None)
+        if not info_art:
+            raise ValueError(f"Infographic artifact {artifact_id} not found or not ready")
+    else:
+        info_art = info_candidates[0] if info_candidates else None
+
+    if not info_art:
+        raise ValueError("No completed infographic artifacts found")
+
+    # Extract URL from the nested metadata structure
+    url = None
+    for item in reversed(info_art):
+        if isinstance(item, list) and len(item) > 0 and isinstance(item[0], list):
+            if len(item) > 2 and isinstance(item[2], list) and len(item[2]) > 0:
+                content_list = item[2]
+                if isinstance(content_list[0], list) and len(content_list[0]) > 1:
+                    img_data = content_list[0][1]
+                    if (
+                        isinstance(img_data, list)
+                        and len(img_data) > 0
+                        and isinstance(img_data[0], str)
+                        and img_data[0].startswith("http")
+                    ):
+                        url = img_data[0]
+                        break
+
+    if not url:
+        raise ValueError("Could not extract infographic download URL")
+    return info_art[0], url
+
+
+async def _extract_slide_deck_url(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_id: str | None,
+    output_format: str,
+) -> tuple[str, str]:
+    """Extract signed slide deck URL from notebook artifact.
+
+    Returns:
+        Tuple of (artifact_id, signed_url).
+    """
+    from notebooklm.rpc import ArtifactStatus, ArtifactTypeCode
+
+    artifacts_data = await client.artifacts._list_raw(notebook_id)
+    slide_candidates = [
+        a
+        for a in artifacts_data
+        if isinstance(a, list)
+        and len(a) > 4
+        and a[2] == ArtifactTypeCode.SLIDE_DECK.value
+        and a[4] == ArtifactStatus.COMPLETED.value
+    ]
+
+    if artifact_id:
+        slide_art = next((s for s in slide_candidates if s[0] == artifact_id), None)
+        if not slide_art:
+            raise ValueError(f"Slide deck artifact {artifact_id} not found or not ready")
+    else:
+        slide_art = slide_candidates[0] if slide_candidates else None
+
+    if not slide_art:
+        raise ValueError("No completed slide deck artifacts found")
+
+    # Extract URL from metadata[16]: [config, title, slides_list, pdf_url, pptx_url]
+    if len(slide_art) <= 16:
+        raise ValueError("Invalid slide deck artifact structure")
+    metadata = slide_art[16]
+    if not isinstance(metadata, list):
+        raise ValueError("Invalid slide deck metadata structure")
+
+    if output_format == "pptx":
+        if len(metadata) < 5:
+            raise ValueError("PPTX URL not available in artifact data")
+        url = metadata[4]
+    else:
+        if len(metadata) < 4:
+            raise ValueError("PDF URL not available in artifact data")
+        url = metadata[3]
+
+    if not isinstance(url, str) or not url.startswith("http"):
+        raise ValueError(f"Could not find {output_format.upper()} download URL")
+    return slide_art[0], url
+
+
+async def _build_cookie_jar(settings: Settings) -> httpx.Cookies:
+    """Build httpx.Cookies from CDP browser cookies."""
+    raw_cookies = await AuthService(settings).load_cookies()
+    cookie_jar = httpx.Cookies()
+    for cookie in raw_cookies:
+        domain = cookie.get("domain", "")
+        name = cookie.get("name", "")
+        value = cookie.get("value", "")
+        if name and value:
+            cookie_jar.set(name, value, domain=domain if domain else None)
+    return cookie_jar
+
+
 async def download_audio(
     settings: Settings,
     notebook_id: str,
     output_path: str,
     artifact_id: str | None,
 ) -> dict[str, Any]:
-    auth = await AuthService(settings).notebooklm_auth()
-    async with NotebookLMClient(auth) as client:
-        path = await client.artifacts.download_audio(notebook_id, output_path, artifact_id=artifact_id)
-    return {"output_path": path}
+    auth_tokens = await AuthService(settings).notebooklm_auth()
+    cookie_jar = await _build_cookie_jar(settings)
+
+    async with NotebookLMClient(auth_tokens) as client:
+        resolved_artifact_id, signed_url = await _extract_audio_url(client, notebook_id, artifact_id)
+
+    downloaded = await _stream_download(signed_url, output_path, cookie_jar)
+    return {"output_path": downloaded}
+
+
+async def _extract_video_url(
+    client: NotebookLMClient,
+    notebook_id: str,
+    artifact_id: str | None,
+) -> tuple[str, str]:
+    """Extract signed video URL from notebook artifact using NotebookLMClient API.
+
+    Returns:
+        Tuple of (artifact_id, signed_url).
+    Raises:
+        ArtifactNotReadyError: If video not found or not ready.
+    """
+    from notebooklm.rpc import ArtifactStatus, ArtifactTypeCode
+
+    artifacts_data = await client.artifacts._list_raw(notebook_id)
+    video_candidates = [
+        a
+        for a in artifacts_data
+        if isinstance(a, list)
+        and len(a) > 4
+        and a[2] == ArtifactTypeCode.VIDEO.value
+        and a[4] == ArtifactStatus.COMPLETED.value
+    ]
+
+    if artifact_id:
+        video_art = next((v for v in video_candidates if v[0] == artifact_id), None)
+        if not video_art:
+            raise ValueError(f"Video artifact {artifact_id} not found or not ready")
+    else:
+        video_art = video_candidates[0] if video_candidates else None
+
+    if not video_art:
+        raise ValueError("No completed video artifacts found")
+
+    # Extract URL from metadata[8]
+    if len(video_art) <= 8:
+        raise ValueError("Invalid video artifact structure")
+    metadata = video_art[8]
+    if not isinstance(metadata, list):
+        raise ValueError("Invalid video metadata structure")
+
+    media_list = None
+    for item in metadata:
+        if (
+            isinstance(item, list)
+            and len(item) > 0
+            and isinstance(item[0], list)
+            and len(item[0]) > 0
+            and isinstance(item[0][0], str)
+            and item[0][0].startswith("http")
+        ):
+            media_list = item
+            break
+
+    if not media_list:
+        raise ValueError("No media URLs found in video artifact")
+
+    return video_art[0], media_list[0][0]
+
+
+async def _stream_download(url: str, output_path: str, cookies: httpx.Cookies, timeout: float = 300.0) -> str:
+    """Stream-download a file using httpx with explicit cookie jar.
+
+    This replaces notebooklm_py's _download_url which requires storage_state.json.
+    """
+    import logging
+    from pathlib import Path
+
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"Download URL must use HTTPS: {url[:80]}")
+    trusted = (".google.com", ".googleusercontent.com", ".googleapis.com")
+    if not any(parsed.netloc == d.lstrip(".") or parsed.netloc.endswith(d) for d in trusted):
+        raise ValueError(f"Untrusted download domain: {parsed.netloc}")
+
+    output_file = Path(output_path)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    async with httpx.AsyncClient(
+        cookies=cookies,
+        timeout=httpx.Timeout(timeout, connect=10.0),
+        follow_redirects=True,
+        headers={
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        },
+    ) as http:
+        async with http.stream("GET", url) as response:
+            response.raise_for_status()
+            with open(output_file, "wb") as f:
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    f.write(chunk)
+
+    return str(output_file)
 
 
 async def download_video(
@@ -1370,10 +1649,14 @@ async def download_video(
     output_path: str,
     artifact_id: str | None,
 ) -> dict[str, Any]:
-    auth = await AuthService(settings).notebooklm_auth()
-    async with NotebookLMClient(auth) as client:
-        path = await client.artifacts.download_video(notebook_id, output_path, artifact_id=artifact_id)
-    return {"output_path": path}
+    auth_tokens = await AuthService(settings).notebooklm_auth()
+    cookie_jar = await _build_cookie_jar(settings)
+
+    async with NotebookLMClient(auth_tokens) as client:
+        resolved_artifact_id, signed_url = await _extract_video_url(client, notebook_id, artifact_id)
+
+    downloaded = await _stream_download(signed_url, output_path, cookie_jar)
+    return {"output_path": downloaded}
 
 
 async def download_slide_deck(
@@ -1383,15 +1666,16 @@ async def download_slide_deck(
     artifact_id: str | None,
     output_format: str,
 ) -> dict[str, Any]:
-    auth = await AuthService(settings).notebooklm_auth()
-    async with NotebookLMClient(auth) as client:
-        path = await client.artifacts.download_slide_deck(
-            notebook_id,
-            output_path,
-            artifact_id=artifact_id,
-            output_format=output_format,
+    auth_tokens = await AuthService(settings).notebooklm_auth()
+    cookie_jar = await _build_cookie_jar(settings)
+
+    async with NotebookLMClient(auth_tokens) as client:
+        resolved_artifact_id, signed_url = await _extract_slide_deck_url(
+            client, notebook_id, artifact_id, output_format
         )
-    return {"output_path": path}
+
+    downloaded = await _stream_download(signed_url, output_path, cookie_jar)
+    return {"output_path": downloaded}
 
 
 async def download_infographic(
@@ -1400,14 +1684,16 @@ async def download_infographic(
     output_path: str,
     artifact_id: str | None,
 ) -> dict[str, Any]:
-    auth = await AuthService(settings).notebooklm_auth()
-    async with NotebookLMClient(auth) as client:
-        path = await client.artifacts.download_infographic(
-            notebook_id,
-            output_path,
-            artifact_id=artifact_id,
+    auth_tokens = await AuthService(settings).notebooklm_auth()
+    cookie_jar = await _build_cookie_jar(settings)
+
+    async with NotebookLMClient(auth_tokens) as client:
+        resolved_artifact_id, signed_url = await _extract_infographic_url(
+            client, notebook_id, artifact_id
         )
-    return {"output_path": path}
+
+    downloaded = await _stream_download(signed_url, output_path, cookie_jar)
+    return {"output_path": downloaded}
 
 
 async def download_quiz(
