@@ -252,80 +252,78 @@ MIT. See LICENSE.
 
 notebooklm-cdp-cli is an unofficial NotebookLM CLI.
 
-It keeps the efficiency of CLI / RPC,
-but replaces **Playwright's storage_state.json** with
-**CDP direct access to your real Chrome login session**.
+It keeps the speed of CLI / RPC workflows,
+but moves auth away from Playwright's `storage_state.json`
+and toward a live Chrome identity over CDP.
 
-In one sentence: the CLI handles operations, CDP handles identity,
-and the real browser is the authentication anchor.
+In one line:
+
+> CLI for operations. CDP for attachment. Real Chrome as the auth anchor.
 
 ---
 
 ### Why this exists
 
-Most automation solutions treat Playwright's login state file as the "source of truth."
+Many automation flows effectively treat Playwright auth state as the source of truth.
 
-Fine for a quick script.
-Not enough for long-term workflows.
+That works for scripts.
+It breaks down for real daily work.
 
-Because once you actually start using NotebookLM as an office assistant, the problems become obvious:
+Once NotebookLM becomes part of an actual workflow, the pain becomes obvious:
 
-- Your real browser has one identity, your automation environment has another
-- Login state drifts, maintenance cost rises
-- Your real browser is already logged in, but your automation is still holding onto a state file
-- NotebookLM ends up locked in the terminal instead of fitting into your real workflow
+- your real browser is one identity
+- your automation environment is another
+- login state drifts
+- your browser is already logged in, yet automation still depends on a separate state file
+- NotebookLM ends up trapped in a terminal silo instead of living inside your real browser workflow
 
-This project isn't against Playwright.
-It's against something else: treating an offline state file as a long-term authentication model.
+This project is not anti-Playwright.
+
+Its objection is narrower:
+
+> an offline state file should not be treated as the long-term identity model.
 
 ---
 
 ### Who this is for
 
-This project is mainly for users who:
+This project is for you if:
 
-- Already have a long-running Chrome / Chromium profile with Google / NotebookLM logged in
-- Want to reuse that real identity instead of maintaining a separate automation login
-- Still want NotebookLM operations to go through CLI / RPC
-- Want automation that stays close to a real browser instead of relying on heavy DOM automation
+- you already have a long-lived Google / NotebookLM login in Chrome or Chromium
+- you want to reuse that real identity instead of maintaining a separate automation-only auth state
+- you want NotebookLM operations to stay primarily CLI / RPC-driven
+- you want automation to stay close to your real browser workflow rather than depend on heavy DOM flows
 
-If what you want is:
+It is probably not your primary path if you want:
 
-- A fully isolated automation-only browser
+- a fully isolated automation-only browser world
 - DOM automation first
-- Playwright session as the core design
-
-Then this may not be your main path.
+- a Playwright-session-first design
 
 ---
 
-### Current capabilities
+### Current scope
 
 The CLI currently covers:
 
 - browser attach / browser status
-- auth check and authentication diagnostics
-- notebook, source, chat, notes, share, research commands
+- auth diagnostics such as auth check
+- notebook, source, chat, notes, share, research
 - artifact listing and management
-- report / audio / video / slide / infographic generation and download flows
+- generation / download flows for report, audio, video, slide, and infographic
 
 ---
 
 ### Release scope
 
-- **Linux**: supported, current release target
-- **Windows**: experimental / deferred, stability not currently promised
+- **Linux**: supported, intended for release use
+- **Windows**: experimental / deferred, not currently promised as stable
 
-This is not a vague "cross-platform support in progress."
-It's a clear product boundary:
-
-- Linux is close enough to release shape
-- Windows is still under refactoring and stability governance
-- Therefore Windows is not currently promised as a launch-supported platform
+This is a deliberate product boundary, not a vague "cross-platform in progress" statement.
 
 ---
 
-### Installation
+### Install
 
 ```bash
 uv sync
@@ -336,12 +334,12 @@ uv run notebooklm --help
 
 ### Quick start
 
-Prerequisites:
+You need:
 
-- A reusable Chrome / Chromium profile
-- The browser instance reachable via CDP
+- a reusable Chrome / Chromium profile
+- a browser instance reachable via CDP
 
-**1) Explicit Chrome profile path**
+**1) Attach with an explicit profile path**
 
 ```bash
 uv run notebooklm browser attach \
@@ -351,7 +349,7 @@ uv run notebooklm auth check
 uv run notebooklm notebook list
 ```
 
-**2) Profile path via environment variable**
+**2) Provide the profile via environment variable**
 
 ```bash
 export NOTEBOOKLM_CDP_USER_DATA_DIR="/path/to/your/chrome-profile"
@@ -360,7 +358,7 @@ uv run notebooklm browser attach
 uv run notebooklm auth check
 ```
 
-**3) Connect to a known CDP host / port directly**
+**3) Connect to an existing CDP host / port**
 
 ```bash
 uv run notebooklm --host 127.0.0.1 --port 9222 browser status
@@ -369,7 +367,7 @@ uv run notebooklm --host 127.0.0.1 --port 9222 auth check
 
 ---
 
-### Example workflow
+### Example flow
 
 ```bash
 uv run notebooklm browser attach --user-data-dir "/path/to/your/chrome-profile"
@@ -383,17 +381,17 @@ uv run notebooklm ask "Summarize the main ideas in Chinese." --notebook <noteboo
 
 ### Reports and generation
 
-Valid `generate report --format` values:
+Valid values for `generate report --format`:
 
 - `briefing_doc`
 - `study_guide`
 - `blog_post`
 - `custom`
 
-Use `--prompt` with `--format custom`.
+When using `--format custom`, you must also provide `--prompt`.
 
 `summary` is not a valid report format.
-For notebook summary, use:
+If you want the notebook summary, use:
 
 ```bash
 uv run notebooklm notebook summary --notebook <notebook-id>
@@ -410,48 +408,48 @@ uv run notebooklm generate report \
 
 ---
 
-### Pending generation tasks
+### Pending submissions
 
-When a generation request has been accepted but the artifact is still pending, the CLI performs a brief best-effort check:
+When a generation request has been accepted but the artifact is still pending, the CLI performs a short best-effort lookup:
 
-- If the new artifact is already identifiable, it returns the artifact id directly
-- If it can't be determined yet, it stays pending and provides follow-up command hints
+- if a newly created artifact can already be identified, it tries to return the artifact id directly
+- otherwise it keeps the result as pending and points you to follow-up commands
 
 Local ledger path: `~/.notebooklm-cdp/pending_submissions.json`
 
-Common follow-up commands:
+Useful commands:
 
 ```bash
 uv run notebooklm artifact pending --json
 uv run notebooklm artifact resolve-pending <submission-id> --json
 ```
 
-`artifact resolve-pending` only auto-resolves when there is a unique strong candidate in the current artifact list;
-otherwise it returns the candidates without pretending certainty.
+`artifact resolve-pending` only auto-resolves when there is a single strong candidate.
+Otherwise it returns candidates instead of pretending certainty.
 
 ---
 
-### Design tradeoffs
+### Design choice
 
-This project is not reinventing the NotebookLM client.
-It's adding a layer of identity alignment that stays closer to real usage:
+This project is not trying to reinvent the NotebookLM client.
+It focuses on a more realistic identity alignment layer:
 
-- The real browser stays the real browser
-- The CLI stays the CLI
+- real browser stays real browser
+- CLI stays CLI
 - CDP connects the two
 
-Instead of building a parallel identity world that only belongs to automation.
+instead of creating a second automation-only identity world.
 
 ---
 
 ### Relationship with notebooklm-py
 
-This project is a standalone CLI,
-but the NotebookLM client / RPC capability is built on top of [notebooklm-py](https://github.com/teng-lin/notebooklm-py).
+This repository is an independent CLI,
+but its current NotebookLM client / RPC capability builds on top of [notebooklm-py](https://github.com/teng-lin/notebooklm-py).
 
-Rough division of responsibility:
+Roughly speaking:
 
-**This repository handles:**
+**this repo handles:**
 
 - live Chrome identity via CDP
 - CLI surface
@@ -461,13 +459,12 @@ Rough division of responsibility:
 
 - NotebookLM client
 - RPC types
-- backend call capability
+- backend capability
 
-This project intentionally does not treat notebooklm-py's Playwright / `storage_state.json` login flow
-as its primary authentication model.
+This project intentionally does not treat the Playwright / `storage_state.json` login flow in notebooklm-py as its primary auth model.
 
-Credit to the upstream project.
-Third-party components and supplementary notes are in THIRD_PARTY.md.
+With thanks to the upstream project.
+See THIRD_PARTY.md for third-party notices and additional details.
 
 ---
 
@@ -480,4 +477,4 @@ MIT. See LICENSE.
 ### Disclaimer
 
 This is an unofficial project.
-It is not affiliated with, endorsed by, or connected to Google or NotebookLM.
+It is not affiliated with or endorsed by Google, NotebookLM, or their affiliates.
