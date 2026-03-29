@@ -5,8 +5,21 @@ description = "Standalone NotebookLM CLI backed by live Chrome CDP identity."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
+keywords = ["notebooklm", "cli", "chrome", "cdp", "automation"]
 authors = [
   { name = "muqiao215" },
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Internet :: WWW/HTTP :: Browsers",
+  "Topic :: Utilities",
 ]
 dependencies = [
   "click>=8.1.7",
@@ -16,7 +29,12 @@ dependencies = [
 ]
 
 [project.scripts]
-notebooklm-cdp = "notebooklm_cdp_cli.cli:main"
+notebooklm = "notebooklm_cdp_cli.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/muqiao215/notebooklm-cdp-cli"
+Repository = "https://github.com/muqiao215/notebooklm-cdp-cli"
+Issues = "https://github.com/muqiao215/notebooklm-cdp-cli/issues"
 
 [dependency-groups]
 dev = [
