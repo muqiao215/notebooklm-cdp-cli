@@ -239,13 +239,6 @@ MIT. See LICENSE.
 
 ---
 
-### Disclaimer
-
-这是一个非官方项目。
-与 Google、NotebookLM 及其关联方没有官方关系，也未获得其背书。
-
----
-
 ## English
 
 ### What this is
@@ -471,10 +464,3 @@ See THIRD_PARTY.md for third-party notices and additional details.
 ### License
 
 MIT. See LICENSE.
-
----
-
-### Disclaimer
-
-This is an unofficial project.
-It is not affiliated with or endorsed by Google, NotebookLM, or their affiliates.
