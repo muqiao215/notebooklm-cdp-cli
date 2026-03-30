@@ -96,6 +96,52 @@ uv run notebooklm --help
 
 ---
 
+### 已验证的 Linux 服务器链路
+
+这条链路已经在全新 Linux VPS 上从 0 验证过一遍：
+
+```text
+Xvfb :99
+  -> 持久 Chrome profile
+  -> CDP on 127.0.0.1:9222
+  -> x11vnc + noVNC
+  -> notebooklm-cdp-cli --host/--port
+```
+
+Chrome 的关键启动方式：
+
+```bash
+DISPLAY=:99 google-chrome-stable \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/root/.browser-login/google-chrome-user-data \
+  --no-sandbox
+```
+
+实测建议：
+
+- Linux 是当前稳定主路径
+- 主 attach 路径优先 `--host 127.0.0.1 --port 9222`
+- 不要依赖 `DevToolsActivePort` 自动发现
+- 登录恢复优先走同 profile 的 `noVNC` 接管
+
+完整 runbook 见 [docs/linux-server-runbook.md](docs/linux-server-runbook.md)。
+
+---
+
+### 仓库现在自带的 Linux helper scripts
+
+这版仓库直接附带了服务器侧脚本：
+
+- `scripts/install-base-linux.sh`
+- `scripts/start-chrome-cdp-linux.sh`
+- `scripts/start-novnc-linux.sh`
+- `scripts/verify-linux-host.sh`
+- `scripts/harden-ssh-linux.sh`
+
+这些脚本的目标不是替代 CLI，而是把 Linux 服务器上的浏览器身份底座固定下来。
+
+---
+
 ### 快速开始
 
 你需要：
@@ -322,6 +368,52 @@ This is a deliberate product boundary, not a vague "cross-platform in progress" 
 uv sync
 uv run notebooklm --help
 ```
+
+---
+
+### Verified Linux server flow
+
+This repository now includes a validated Linux-first server path:
+
+```text
+Xvfb :99
+  -> persistent Chrome profile
+  -> CDP on 127.0.0.1:9222
+  -> x11vnc + noVNC
+  -> notebooklm-cdp-cli --host/--port
+```
+
+Key Chrome launch pattern:
+
+```bash
+DISPLAY=:99 google-chrome-stable \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/root/.browser-login/google-chrome-user-data \
+  --no-sandbox
+```
+
+Practical recommendations:
+
+- Linux is the current stable path
+- prefer explicit `--host 127.0.0.1 --port 9222`
+- do not depend on `DevToolsActivePort`
+- use same-profile noVNC takeover for login recovery
+
+See [docs/linux-server-runbook.md](docs/linux-server-runbook.md) for the full runbook.
+
+---
+
+### Bundled Linux helper scripts
+
+This release now ships server-side helper scripts:
+
+- `scripts/install-base-linux.sh`
+- `scripts/start-chrome-cdp-linux.sh`
+- `scripts/start-novnc-linux.sh`
+- `scripts/verify-linux-host.sh`
+- `scripts/harden-ssh-linux.sh`
+
+These are meant to stabilize the Linux browser identity layer around the CLI, not replace the CLI itself.
 
 ---
 

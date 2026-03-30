@@ -63,3 +63,27 @@ def test_readme_makes_report_formats_explicit():
     assert "blog_post" in normalized
     assert "custom" in normalized
     assert "summary is not a valid report format" in normalized
+
+
+def test_readme_documents_linux_xvfb_chrome_cdp_flow():
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8")
+
+    assert "DISPLAY=:99" in text
+    assert "--remote-debugging-port=9222" in text
+    assert "--user-data-dir=/root/.browser-login/google-chrome-user-data" in text
+    assert "--no-sandbox" in text
+    assert "Xvfb" in text
+
+
+def test_linux_launcher_script_exists_with_expected_flags():
+    script = Path(__file__).resolve().parents[1] / "scripts" / "start-chrome-cdp-linux.sh"
+
+    assert script.exists()
+
+    text = script.read_text(encoding="utf-8")
+    assert "DISPLAY=:99" in text
+    assert "--remote-debugging-port=9222" in text
+    assert "--user-data-dir=" in text
+    assert "--no-sandbox" in text
+    assert "Xvfb" in text
