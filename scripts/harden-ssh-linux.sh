@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ! -s /root/.ssh/authorized_keys ]]; then
-  echo "Refusing to continue: /root/.ssh/authorized_keys is missing or empty." >&2
+AUTHORIZED_KEYS="${SSH_AUTHORIZED_KEYS:-$HOME/.ssh/authorized_keys}"
+
+if [[ ! -s "${AUTHORIZED_KEYS}" ]]; then
+  echo "Refusing to continue: ${AUTHORIZED_KEYS} is missing or empty." >&2
   exit 1
 fi
 

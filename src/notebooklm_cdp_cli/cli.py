@@ -14,6 +14,10 @@ from .auth import AuthService
 from .browser import BrowserInspector, attach_browser
 from .config import Settings
 from .doctor import run_doctor
+from .core.targets_cli import targets_group
+from .products.colab.cli import colab_group
+from .products.flow.cli import flow_group
+from .products.gemini.cli import gemini_group
 from .notebooklm_ops import (
     add_research_source,
     add_share_user,
@@ -529,6 +533,12 @@ def cli(ctx: click.Context, host: str | None, port: int | None, timeout: float |
     ctx.obj["host"] = host or env_settings.host
     ctx.obj["port"] = port or env_settings.port
     ctx.obj["timeout"] = timeout or env_settings.timeout
+
+
+cli.add_command(gemini_group)
+cli.add_command(flow_group)
+cli.add_command(colab_group)
+cli.add_command(targets_group)
 
 
 @cli.group("browser")
@@ -1312,17 +1322,7 @@ def share_remove_cmd(
     _emit(payload, json_output)
 
 
-@cli.command("ask")
-@click.argument("question")
-@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
-@click.option("--conversation-id", default=None, help="Conversation ID override")
-@click.option("--new", "start_new", is_flag=True, help="Ignore the persisted conversation and start a new thread")
-@click.option("--source", "source_ids", multiple=True, help="Limit the ask to specific source IDs")
-@click.option("--save-as-note", is_flag=True, help="Save the answer as a note")
-@click.option("--note-title", default=None, help="Saved note title")
-@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
-@click.pass_context
-def ask(
+def _ask_impl(
     ctx: click.Context,
     question: str,
     notebook_id: str | None,
@@ -1369,17 +1369,7 @@ def ask(
     _emit(payload, json_output)
 
 
-@cli.command("history")
-@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
-@click.option("--limit", default=100, type=int, show_default=True, help="Maximum number of turns")
-@click.option("--conversation-id", default=None, help="Conversation ID override")
-@click.option("--save", "save_as_note", is_flag=True, help="Save history as a note")
-@click.option("--note-title", default=None, help="Saved note title")
-@click.option("--show-all", is_flag=True, help="Show full question and answer text")
-@click.option("--clear-cache", is_flag=True, help="Clear the locally persisted conversation pointer")
-@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
-@click.pass_context
-def history(
+def _history_impl(
     ctx: click.Context,
     notebook_id: str | None,
     limit: int,
@@ -1427,6 +1417,121 @@ def history(
     _emit(payload, json_output)
 
 
+def _configure_impl(
+    ctx: click.Context,
+    notebook_id: str | None,
+    mode: str | None,
+    persona: str | None,
+    response_length: str | None,
+    json_output: bool,
+) -> None:
+    settings = _settings_from_ctx(ctx)
+    resolved = _require_notebook(notebook_id)
+    payload = _run(configure_chat(settings, resolved, mode, persona, response_length))
+    _emit(payload, json_output)
+
+
+@cli.group("chat")
+def chat_group() -> None:
+    """Chat commands."""
+
+
+@cli.command("ask")
+@click.argument("question")
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--conversation-id", default=None, help="Conversation ID override")
+@click.option("--new", "start_new", is_flag=True, help="Ignore the persisted conversation and start a new thread")
+@click.option("--source", "source_ids", multiple=True, help="Limit the ask to specific source IDs")
+@click.option("--save-as-note", is_flag=True, help="Save the answer as a note")
+@click.option("--note-title", default=None, help="Saved note title")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def ask(
+    ctx: click.Context,
+    question: str,
+    notebook_id: str | None,
+    conversation_id: str | None,
+    start_new: bool,
+    source_ids: tuple[str, ...],
+    save_as_note: bool,
+    note_title: str | None,
+    json_output: bool,
+) -> None:
+    _ask_impl(ctx, question, notebook_id, conversation_id, start_new, source_ids, save_as_note, note_title, json_output)
+
+
+@chat_group.command("ask")
+@click.argument("question")
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--conversation-id", default=None, help="Conversation ID override")
+@click.option("--new", "start_new", is_flag=True, help="Ignore the persisted conversation and start a new thread")
+@click.option("--source", "source_ids", multiple=True, help="Limit the ask to specific source IDs")
+@click.option("--save-as-note", is_flag=True, help="Save the answer as a note")
+@click.option("--note-title", default=None, help="Saved note title")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def chat_ask(
+    ctx: click.Context,
+    question: str,
+    notebook_id: str | None,
+    conversation_id: str | None,
+    start_new: bool,
+    source_ids: tuple[str, ...],
+    save_as_note: bool,
+    note_title: str | None,
+    json_output: bool,
+) -> None:
+    _ask_impl(ctx, question, notebook_id, conversation_id, start_new, source_ids, save_as_note, note_title, json_output)
+
+
+@cli.command("history")
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--limit", default=100, type=int, show_default=True, help="Maximum number of turns")
+@click.option("--conversation-id", default=None, help="Conversation ID override")
+@click.option("--save", "save_as_note", is_flag=True, help="Save history as a note")
+@click.option("--note-title", default=None, help="Saved note title")
+@click.option("--show-all", is_flag=True, help="Show full question and answer text")
+@click.option("--clear-cache", is_flag=True, help="Clear the locally persisted conversation pointer")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def history(
+    ctx: click.Context,
+    notebook_id: str | None,
+    limit: int,
+    conversation_id: str | None,
+    save_as_note: bool,
+    note_title: str | None,
+    show_all: bool,
+    clear_cache: bool,
+    json_output: bool,
+) -> None:
+    _history_impl(ctx, notebook_id, limit, conversation_id, save_as_note, note_title, show_all, clear_cache, json_output)
+
+
+@chat_group.command("history")
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--limit", default=100, type=int, show_default=True, help="Maximum number of turns")
+@click.option("--conversation-id", default=None, help="Conversation ID override")
+@click.option("--save", "save_as_note", is_flag=True, help="Save history as a note")
+@click.option("--note-title", default=None, help="Saved note title")
+@click.option("--show-all", is_flag=True, help="Show full question and answer text")
+@click.option("--clear-cache", is_flag=True, help="Clear the locally persisted conversation pointer")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def chat_history(
+    ctx: click.Context,
+    notebook_id: str | None,
+    limit: int,
+    conversation_id: str | None,
+    save_as_note: bool,
+    note_title: str | None,
+    show_all: bool,
+    clear_cache: bool,
+    json_output: bool,
+) -> None:
+    _history_impl(ctx, notebook_id, limit, conversation_id, save_as_note, note_title, show_all, clear_cache, json_output)
+
+
 @cli.command("configure")
 @click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
 @click.option("--mode", default=None, type=CHAT_MODE_CHOICES, help="Predefined chat mode")
@@ -1442,10 +1547,25 @@ def configure(
     response_length: str | None,
     json_output: bool,
 ) -> None:
-    settings = _settings_from_ctx(ctx)
-    resolved = _require_notebook(notebook_id)
-    payload = _run(configure_chat(settings, resolved, mode, persona, response_length))
-    _emit(payload, json_output)
+    _configure_impl(ctx, notebook_id, mode, persona, response_length, json_output)
+
+
+@chat_group.command("configure")
+@click.option("-n", "--notebook", "notebook_id", default=None, help="Notebook ID")
+@click.option("--mode", default=None, type=CHAT_MODE_CHOICES, help="Predefined chat mode")
+@click.option("--persona", default=None, help="Custom persona")
+@click.option("--response-length", default=None, type=CHAT_RESPONSE_LENGTH_CHOICES, help="Response length")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON")
+@click.pass_context
+def chat_configure(
+    ctx: click.Context,
+    notebook_id: str | None,
+    mode: str | None,
+    persona: str | None,
+    response_length: str | None,
+    json_output: bool,
+) -> None:
+    _configure_impl(ctx, notebook_id, mode, persona, response_length, json_output)
 
 
 @cli.group("artifact")

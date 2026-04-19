@@ -34,4 +34,5 @@ if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
 
-install -d -m 0700 /root/.browser-login/google-chrome-user-data
+PROFILE_DIR="${NOTEBOOKLM_CDP_USER_DATA_DIR:-$HOME/.browser-login/google-chrome-user-data}"
+install -d -m 0700 "${PROFILE_DIR}"

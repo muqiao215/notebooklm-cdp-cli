@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # Launch pattern reference:
-# DISPLAY=:99 google-chrome-stable --remote-debugging-port=9222 --user-data-dir=/root/.browser-login/google-chrome-user-data --no-sandbox
+# DISPLAY=:99 google-chrome-stable --remote-debugging-port=9222 --user-data-dir="$HOME/.browser-login/google-chrome-user-data" --no-sandbox
 
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 DISPLAY=":${DISPLAY_NUM}"
 SCREEN_GEOMETRY="${SCREEN_GEOMETRY:-1600x1000x24}"
 CHROME_PORT="${CHROME_PORT:-9222}"
 CHROME_ADDR="${CHROME_ADDR:-127.0.0.1}"
-USER_DATA_DIR="${USER_DATA_DIR:-/root/.browser-login/google-chrome-user-data}"
+USER_DATA_DIR="${USER_DATA_DIR:-${NOTEBOOKLM_CDP_USER_DATA_DIR:-$HOME/.browser-login/google-chrome-user-data}}"
 START_URL="${START_URL:-https://notebooklm.google.com/}"
 XVFB_LOG="${XVFB_LOG:-/var/log/notebooklm-xvfb.log}"
 CHROME_LOG="${CHROME_LOG:-/var/log/notebooklm-chrome.log}"

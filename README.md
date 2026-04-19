@@ -70,6 +70,45 @@ notebooklm-cdp-cli 是一个非官方的 NotebookLM 命令行工具。
 - notebook、source、chat、notes、share、research
 - artifact 列表与管理
 - report / audio / video / slide / infographic 的生成与下载流程
+- Gemini Web、Google Flow、Colab 的浏览器命令入口
+
+### 命令矩阵与稳定性
+
+| Product | Command families | Stability |
+|---|---|---|
+| NotebookLM | `browser`, `auth`, `doctor`, `notebook`, `source`, `chat` / `ask`, `notes`, `share`, `research`, `artifact`, `generate`, `download`, `language` | supported |
+| Gemini | `gemini generate text`, `gemini ask`, `gemini generate image`, `gemini generate vision` | supported |
+| Gemini | `gemini deep-research`, `gemini generate video`, `gemini chat ...` | experimental |
+| Flow | `flow open`, `flow text-to-video`, `flow image-to-video`, `flow screenshot` | experimental |
+| Colab | `targets list/select/current/open --product colab`, `colab notebook list/select/current/open/info/summary`, `colab cell count/run/run-file`, `colab runtime status` | supported |
+| Colab | `colab file upload/list/download`, `colab artifact list/latest/get/download`, `colab notebook export` | best-effort |
+
+Stability 语义：
+
+- `supported` 表示 CLI contract 和回归测试覆盖稳定输出结构。
+- `experimental` 表示依赖浏览器 UI 或弱选择器，输出会显式带 `stability: "experimental"`。
+- `best-effort` 表示能力存在，但依赖 Colab 页面内 API、DOM 链接、浏览器 fetch 或 DOM 重建；输出会显式带 `stability: "best_effort"` 或 `stability: "best-effort"` 等价文案时按 JSON 字段为准。
+
+Colab file / artifact / export 的边界：
+
+- 文件上传是浏览器页内 best-effort 提交；大文件传输不承诺稳定。
+- 文件和 artifact 下载只支持可从页面上下文 `fetch` 的 HTTP(S) URL；`blob:`、`data:`、缺失 URL 会返回结构化 unsupported error。
+- Notebook export 是 DOM 重建的 best-effort 导出，不承诺与 Colab 原生导出完全一致。
+- JSON 输出会区分 CLI `status` 和操作状态，例如 `upload.state`、`download.state`、`export.state`，并提供 `evidence` / `uncertainty`。
+
+### 迁移说明
+
+| 旧入口 | 新入口 |
+|---|---|
+| 独立 NotebookLM CLI | 保持 `notebooklm notebook/source/chat/research/artifact/generate/download ...` |
+| `gemini-web-cli generate text` | `notebooklm gemini generate text` |
+| `gemini-web-cli ask` | `notebooklm gemini ask` |
+| `gemini-web-cli generate image/vision/video` | `notebooklm gemini generate image/vision/video`，其中 video 为 experimental |
+| `gemini-web-cli flow ...` | `notebooklm flow ...`，当前 Flow 命令为 experimental |
+| `colab-cdp-cli notebook list/select/current/open` | `notebooklm targets ... --product colab`，也可用 `notebooklm colab notebook ...` alias |
+| `colab-cdp-cli cell/runtime/file/artifact/notebook export` | `notebooklm colab cell/runtime/file/artifact/notebook export ...` |
+
+旧仓只作为迁移来源；使用本仓不需要安装旧 Gemini/Colab 仓库。
 
 ---
 
@@ -113,7 +152,7 @@ Chrome 的关键启动方式：
 ```bash
 DISPLAY=:99 google-chrome-stable \
   --remote-debugging-port=9222 \
-  --user-data-dir=/root/.browser-login/google-chrome-user-data \
+  --user-data-dir=$HOME/.browser-login/google-chrome-user-data \
   --no-sandbox
 ```
 
@@ -350,6 +389,45 @@ The CLI currently covers:
 - notebook, source, chat, notes, share, research
 - artifact listing and management
 - generation / download flows for report, audio, video, slide, and infographic
+- browser-backed Gemini, Flow, and Colab command entry points
+
+### Command Matrix And Stability
+
+| Product | Command families | Stability |
+|---|---|---|
+| NotebookLM | `browser`, `auth`, `doctor`, `notebook`, `source`, `chat` / `ask`, `notes`, `share`, `research`, `artifact`, `generate`, `download`, `language` | supported |
+| Gemini | `gemini generate text`, `gemini ask`, `gemini generate image`, `gemini generate vision` | supported |
+| Gemini | `gemini deep-research`, `gemini generate video`, `gemini chat ...` | experimental |
+| Flow | `flow open`, `flow text-to-video`, `flow image-to-video`, `flow screenshot` | experimental |
+| Colab | `targets list/select/current/open --product colab`, `colab notebook list/select/current/open/info/summary`, `colab cell count/run/run-file`, `colab runtime status` | supported |
+| Colab | `colab file upload/list/download`, `colab artifact list/latest/get/download`, `colab notebook export` | best-effort |
+
+Stability means:
+
+- `supported` commands have stable CLI contracts and regression coverage for their output shape.
+- `experimental` commands depend on browser UI behavior or weak selectors and return `stability: "experimental"` in JSON.
+- `best-effort` commands exist, but depend on Colab page APIs, DOM links, browser fetch, or DOM reconstruction and return `stability: "best_effort"` in JSON.
+
+Colab file / artifact / export boundaries:
+
+- File upload is a best-effort browser-page submission. Large file transfer is not guaranteed.
+- File and artifact download only support HTTP(S) URLs fetchable from the page context. `blob:`, `data:`, and missing URLs return structured unsupported errors.
+- Notebook export is a best-effort DOM reconstruction and is not promised to match Colab's native export exactly.
+- JSON output distinguishes CLI `status` from operation state, such as `upload.state`, `download.state`, and `export.state`, and includes `evidence` / `uncertainty`.
+
+### Migration Notes
+
+| Old entry point | New entry point |
+|---|---|
+| Standalone NotebookLM CLI usage | Keep using `notebooklm notebook/source/chat/research/artifact/generate/download ...` |
+| `gemini-web-cli generate text` | `notebooklm gemini generate text` |
+| `gemini-web-cli ask` | `notebooklm gemini ask` |
+| `gemini-web-cli generate image/vision/video` | `notebooklm gemini generate image/vision/video`; video is experimental |
+| `gemini-web-cli flow ...` | `notebooklm flow ...`; current Flow commands are experimental |
+| `colab-cdp-cli notebook list/select/current/open` | `notebooklm targets ... --product colab`, or the `notebooklm colab notebook ...` aliases |
+| `colab-cdp-cli cell/runtime/file/artifact/notebook export` | `notebooklm colab cell/runtime/file/artifact/notebook export ...` |
+
+The old Gemini and Colab repositories are migration sources only. They are not required dependencies for this package.
 
 ---
 
@@ -388,7 +466,7 @@ Key Chrome launch pattern:
 ```bash
 DISPLAY=:99 google-chrome-stable \
   --remote-debugging-port=9222 \
-  --user-data-dir=/root/.browser-login/google-chrome-user-data \
+  --user-data-dir=$HOME/.browser-login/google-chrome-user-data \
   --no-sandbox
 ```
 

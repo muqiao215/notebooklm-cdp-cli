@@ -1,0 +1,2 @@
+"""Colab product adapter."""
+

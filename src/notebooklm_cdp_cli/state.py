@@ -51,6 +51,30 @@ def set_browser_config(browser: dict[str, Any]) -> None:
     save_config(config)
 
 
+def get_product_target_selection(product: str) -> dict[str, Any] | None:
+    selection = load_config().get("targets", {}).get(product)
+    return dict(selection) if isinstance(selection, dict) else None
+
+
+def set_product_target_selection(
+    product: str,
+    *,
+    target_id: str,
+    title: str | None,
+    url: str | None,
+) -> dict[str, Any]:
+    config = load_config()
+    targets = config.setdefault("targets", {})
+    entry = {
+        "target_id": target_id,
+        "title": title,
+        "url": url,
+    }
+    targets[product] = entry
+    save_config(config)
+    return entry
+
+
 def load_context() -> dict[str, Any]:
     path = get_context_path()
     if not path.exists():

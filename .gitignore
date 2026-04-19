@@ -5,3 +5,15 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# Internal agent/planning artifacts must not enter the public release surface.
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+TASKMEMORY.md
+**/TASKMEMORY.md
+**/findings.md
+**/progress.md
+**/result.md
+**/task_plan.md
+plans/

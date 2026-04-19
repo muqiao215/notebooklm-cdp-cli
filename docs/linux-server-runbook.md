@@ -60,7 +60,7 @@ The key launch pattern is:
 DISPLAY=:99 google-chrome-stable \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9222 \
-  --user-data-dir=/root/.browser-login/google-chrome-user-data \
+  --user-data-dir=$HOME/.browser-login/google-chrome-user-data \
   --no-sandbox
 ```
 
@@ -98,16 +98,16 @@ If Google login is required, complete it there so the same server-side Chrome pr
 ## 4. Clone and verify the repo
 
 ```bash
-mkdir -p /root/work
-git clone https://github.com/muqiao215/notebooklm-cdp-cli.git /root/work/notebooklm-cdp-cli
-cd /root/work/notebooklm-cdp-cli
+mkdir -p "$HOME/work"
+git clone https://github.com/muqiao215/notebooklm-cdp-cli.git "$HOME/work/notebooklm-cdp-cli"
+cd "$HOME/work/notebooklm-cdp-cli"
 ~/.local/bin/uv sync
 ```
 
 Use the bundled verification script:
 
 ```bash
-ssh root@<host> 'REPO_DIR=/root/work/notebooklm-cdp-cli bash -s' < scripts/verify-linux-host.sh
+ssh root@<host> 'REPO_DIR=$HOME/work/notebooklm-cdp-cli bash -s' < scripts/verify-linux-host.sh
 ```
 
 Or run the key commands directly:

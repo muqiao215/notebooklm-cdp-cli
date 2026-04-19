@@ -1,6 +1,8 @@
 from click.testing import CliRunner
 from pathlib import Path
+import tomllib
 
+from notebooklm_cdp_cli import __version__
 from notebooklm_cdp_cli.cli import cli
 
 
@@ -39,6 +41,24 @@ def test_doctor_json_output(monkeypatch):
     assert '"csrf_token": "csrf123"' in result.output
 
 
+def test_chat_group_help_lists_chat_commands():
+    runner = CliRunner()
+
+    result = runner.invoke(cli, ["chat", "--help"])
+
+    assert result.exit_code == 0
+    assert "ask" in result.output
+    assert "history" in result.output
+    assert "configure" in result.output
+
+
+def test_package_version_matches_pyproject():
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+
+    assert __version__ == project["project"]["version"]
+
+
 def test_generate_report_help_lists_valid_formats_and_summary_warning():
     runner = CliRunner()
 
@@ -71,7 +91,7 @@ def test_readme_documents_linux_xvfb_chrome_cdp_flow():
 
     assert "DISPLAY=:99" in text
     assert "--remote-debugging-port=9222" in text
-    assert "--user-data-dir=/root/.browser-login/google-chrome-user-data" in text
+    assert "--user-data-dir=$HOME/.browser-login/google-chrome-user-data" in text
     assert "--no-sandbox" in text
     assert "Xvfb" in text
 
