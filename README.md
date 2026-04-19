@@ -70,17 +70,20 @@ notebooklm-cdp-cli 是一个非官方的 NotebookLM 命令行工具。
 - notebook、source、chat、notes、share、research
 - artifact 列表与管理
 - report / audio / video / slide / infographic 的生成与下载流程
-- Gemini Web、Google Flow、Colab 的浏览器命令入口
+- 三个正式产品入口：
+- `notebooklm 负责 NotebookLM`
+- `gemini-web 负责 Gemini / Flow`
+- `colab 负责 Colab`
 
 ### 命令矩阵与稳定性
 
 | Product | Command families | Stability |
 |---|---|---|
 | NotebookLM | `browser`, `auth`, `doctor`, `notebook`, `source`, `chat` / `ask`, `notes`, `share`, `research`, `artifact`, `generate`, `download`, `language` | supported |
-| Gemini | `gemini generate text`, `gemini ask`, `gemini generate image`, `gemini generate vision` | supported |
-| Gemini | `gemini deep-research`, `gemini generate video`, `gemini chat ...` | experimental |
-| Flow | `flow open`, `flow text-to-video`, `flow image-to-video`, `flow screenshot` | experimental |
-| Colab | `targets list/select/current/open --product colab`, `colab notebook list/select/current/open/info/summary`, `colab cell count/run/run-file`, `colab runtime status` | supported |
+| Gemini | `gemini-web generate text`, `gemini-web ask`, `gemini-web generate image`, `gemini-web generate vision` | supported |
+| Gemini | `gemini-web deep-research`, `gemini-web generate video`, `gemini-web chat ...` | experimental |
+| Flow | `gemini-web flow open`, `gemini-web flow text-to-video`, `gemini-web flow image-to-video`, `gemini-web flow screenshot` | experimental |
+| Colab | `colab notebook list/select/current/open/info/summary`, `colab cell count/run/run-file`, `colab runtime status` | supported |
 | Colab | `colab file upload/list/download`, `colab artifact list/latest/get/download`, `colab notebook export` | best-effort |
 
 Stability 语义：
@@ -96,19 +99,24 @@ Colab file / artifact / export 的边界：
 - Notebook export 是 DOM 重建的 best-effort 导出，不承诺与 Colab 原生导出完全一致。
 - JSON 输出会区分 CLI `status` 和操作状态，例如 `upload.state`、`download.state`、`export.state`，并提供 `evidence` / `uncertainty`。
 
+共享 target 解析层仍保留在整合命令面中，
+例如 `notebooklm targets ... --product colab`，
+但它是 secondary route，不是 Colab 的主公开入口。
+
 ### 迁移说明
 
 | 旧入口 | 新入口 |
 |---|---|
 | 独立 NotebookLM CLI | 保持 `notebooklm notebook/source/chat/research/artifact/generate/download ...` |
-| `gemini-web-cli generate text` | 保留旧入口：`gemini-web generate text`；整合入口：`notebooklm gemini generate text` |
-| `gemini-web-cli ask` | 保留旧入口：`gemini-web ask`；整合入口：`notebooklm gemini ask` |
-| `gemini-web-cli generate image/vision/video` | 保留旧入口：`gemini-web generate image/vision/video`；整合入口：`notebooklm gemini generate image/vision/video`，其中 video 为 experimental |
-| `gemini-web-cli flow ...` | 保留旧入口：`gemini-web flow ...`；整合入口：`notebooklm flow ...`，当前 Flow 命令为 experimental |
-| `colab-cdp-cli notebook list/select/current/open` | `notebooklm targets ... --product colab`，也可用 `notebooklm colab notebook ...` alias |
-| `colab-cdp-cli cell/runtime/file/artifact/notebook export` | `notebooklm colab cell/runtime/file/artifact/notebook export ...` |
+| `gemini-web-cli generate text` | 正式入口：`gemini-web generate text`；整合入口：`notebooklm gemini generate text` |
+| `gemini-web-cli ask` | 正式入口：`gemini-web ask`；整合入口：`notebooklm gemini ask` |
+| `gemini-web-cli generate image/vision/video` | 正式入口：`gemini-web generate image/vision/video`；整合入口：`notebooklm gemini generate image/vision/video`，其中 video 为 experimental |
+| `gemini-web-cli flow ...` | 正式入口：`gemini-web flow ...`；整合入口：`notebooklm flow ...`，当前 Flow 命令为 experimental |
+| `colab-cdp-cli notebook list/select/current/open/info/summary` | 正式入口：`colab notebook ...` |
+| `colab-cdp-cli cell/runtime/file/artifact/notebook export` | 正式入口：`colab cell/runtime/file/artifact/notebook export ...` |
 
-旧仓只作为迁移来源；使用本仓不需要安装旧 Gemini/Colab 仓库，但会继续保留 `gemini-web` 兼容命令入口。
+旧仓只作为迁移来源；使用本仓不需要安装旧 Gemini/Colab 仓库。
+在合并仓里，`gemini-web` 和 `colab` 都是正式产品入口，不是兼容补丁命名。
 
 ---
 
@@ -389,17 +397,20 @@ The CLI currently covers:
 - notebook, source, chat, notes, share, research
 - artifact listing and management
 - generation / download flows for report, audio, video, slide, and infographic
-- browser-backed Gemini, Flow, and Colab command entry points
+- three primary product commands:
+  `notebooklm` for NotebookLM;
+  `gemini-web` for Gemini / Flow;
+  `colab` for Colab.
 
 ### Command Matrix And Stability
 
 | Product | Command families | Stability |
 |---|---|---|
 | NotebookLM | `browser`, `auth`, `doctor`, `notebook`, `source`, `chat` / `ask`, `notes`, `share`, `research`, `artifact`, `generate`, `download`, `language` | supported |
-| Gemini | `gemini generate text`, `gemini ask`, `gemini generate image`, `gemini generate vision` | supported |
-| Gemini | `gemini deep-research`, `gemini generate video`, `gemini chat ...` | experimental |
-| Flow | `flow open`, `flow text-to-video`, `flow image-to-video`, `flow screenshot` | experimental |
-| Colab | `targets list/select/current/open --product colab`, `colab notebook list/select/current/open/info/summary`, `colab cell count/run/run-file`, `colab runtime status` | supported |
+| Gemini | `gemini-web generate text`, `gemini-web ask`, `gemini-web generate image`, `gemini-web generate vision` | supported |
+| Gemini | `gemini-web deep-research`, `gemini-web generate video`, `gemini-web chat ...` | experimental |
+| Flow | `gemini-web flow open`, `gemini-web flow text-to-video`, `gemini-web flow image-to-video`, `gemini-web flow screenshot` | experimental |
+| Colab | `colab notebook list/select/current/open/info/summary`, `colab cell count/run/run-file`, `colab runtime status` | supported |
 | Colab | `colab file upload/list/download`, `colab artifact list/latest/get/download`, `colab notebook export` | best-effort |
 
 Stability means:
@@ -415,19 +426,24 @@ Colab file / artifact / export boundaries:
 - Notebook export is a best-effort DOM reconstruction and is not promised to match Colab's native export exactly.
 - JSON output distinguishes CLI `status` from operation state, such as `upload.state`, `download.state`, and `export.state`, and includes `evidence` / `uncertainty`.
 
+The shared target-resolution layer remains available through integrated routes such as
+`notebooklm targets ... --product colab`,
+but that is a secondary route, not Colab's primary public command surface.
+
 ### Migration Notes
 
 | Old entry point | New entry point |
 |---|---|
 | Standalone NotebookLM CLI usage | Keep using `notebooklm notebook/source/chat/research/artifact/generate/download ...` |
-| `gemini-web-cli generate text` | preserved legacy entrypoint: `gemini-web generate text`; integrated entrypoint: `notebooklm gemini generate text` |
-| `gemini-web-cli ask` | preserved legacy entrypoint: `gemini-web ask`; integrated entrypoint: `notebooklm gemini ask` |
-| `gemini-web-cli generate image/vision/video` | preserved legacy entrypoint: `gemini-web generate image/vision/video`; integrated entrypoint: `notebooklm gemini generate image/vision/video`; video is experimental |
-| `gemini-web-cli flow ...` | preserved legacy entrypoint: `gemini-web flow ...`; integrated entrypoint: `notebooklm flow ...`; current Flow commands are experimental |
-| `colab-cdp-cli notebook list/select/current/open` | `notebooklm targets ... --product colab`, or the `notebooklm colab notebook ...` aliases |
-| `colab-cdp-cli cell/runtime/file/artifact/notebook export` | `notebooklm colab cell/runtime/file/artifact/notebook export ...` |
+| `gemini-web-cli generate text` | primary entrypoint: `gemini-web generate text`; integrated entrypoint: `notebooklm gemini generate text` |
+| `gemini-web-cli ask` | primary entrypoint: `gemini-web ask`; integrated entrypoint: `notebooklm gemini ask` |
+| `gemini-web-cli generate image/vision/video` | primary entrypoint: `gemini-web generate image/vision/video`; integrated entrypoint: `notebooklm gemini generate image/vision/video`; video is experimental |
+| `gemini-web-cli flow ...` | primary entrypoint: `gemini-web flow ...`; integrated entrypoint: `notebooklm flow ...`; current Flow commands are experimental |
+| `colab-cdp-cli notebook list/select/current/open/info/summary` | primary entrypoint: `colab notebook ...` |
+| `colab-cdp-cli cell/runtime/file/artifact/notebook export` | primary entrypoint: `colab cell/runtime/file/artifact/notebook export ...` |
 
-The old Gemini and Colab repositories are migration sources only. They are not required dependencies for this package, but the `gemini-web` compatibility entrypoint remains available.
+The old Gemini and Colab repositories are migration sources only. They are not required dependencies for this package.
+Inside the merged repository, both `gemini-web` and `colab` are first-class product commands.
 
 ---
 

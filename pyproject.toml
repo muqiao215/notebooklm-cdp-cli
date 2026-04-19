@@ -1,6 +1,6 @@
 [project]
 name = "notebooklm-cdp-cli"
-version = "0.2.1"
+version = "0.2.2"
 description = "Standalone NotebookLM CLI backed by live Chrome CDP identity."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,6 +31,7 @@ dependencies = [
 [project.scripts]
 notebooklm = "notebooklm_cdp_cli.cli:main"
 gemini-web = "notebooklm_cdp_cli.products.gemini.legacy_cli:main"
+colab = "notebooklm_cdp_cli.products.colab.legacy_cli:main"
 
 [project.urls]
 Homepage = "https://github.com/muqiao215/notebooklm-cdp-cli"

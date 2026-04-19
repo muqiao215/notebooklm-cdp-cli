@@ -59,6 +59,16 @@ def test_package_version_matches_pyproject():
     assert __version__ == project["project"]["version"]
 
 
+def test_pyproject_exposes_primary_product_console_scripts():
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    project = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    scripts = project["project"]["scripts"]
+
+    assert scripts["notebooklm"] == "notebooklm_cdp_cli.cli:main"
+    assert scripts["gemini-web"] == "notebooklm_cdp_cli.products.gemini.legacy_cli:main"
+    assert scripts["colab"] == "notebooklm_cdp_cli.products.colab.legacy_cli:main"
+
+
 def test_generate_report_help_lists_valid_formats_and_summary_warning():
     runner = CliRunner()
 
@@ -94,6 +104,16 @@ def test_readme_documents_linux_xvfb_chrome_cdp_flow():
     assert "--user-data-dir=$HOME/.browser-login/google-chrome-user-data" in text
     assert "--no-sandbox" in text
     assert "Xvfb" in text
+
+
+def test_readme_sets_notebooklm_gemini_web_colab_as_primary_product_commands():
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8")
+
+    assert "notebooklm 负责 NotebookLM" in text
+    assert "gemini-web 负责 Gemini / Flow" in text
+    assert "colab 负责 Colab" in text
+    assert "notebooklm colab" not in text
 
 
 def test_linux_launcher_script_exists_with_expected_flags():
