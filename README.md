@@ -101,14 +101,14 @@ Colab file / artifact / export 的边界：
 | 旧入口 | 新入口 |
 |---|---|
 | 独立 NotebookLM CLI | 保持 `notebooklm notebook/source/chat/research/artifact/generate/download ...` |
-| `gemini-web-cli generate text` | `notebooklm gemini generate text` |
-| `gemini-web-cli ask` | `notebooklm gemini ask` |
-| `gemini-web-cli generate image/vision/video` | `notebooklm gemini generate image/vision/video`，其中 video 为 experimental |
-| `gemini-web-cli flow ...` | `notebooklm flow ...`，当前 Flow 命令为 experimental |
+| `gemini-web-cli generate text` | 保留旧入口：`gemini-web generate text`；整合入口：`notebooklm gemini generate text` |
+| `gemini-web-cli ask` | 保留旧入口：`gemini-web ask`；整合入口：`notebooklm gemini ask` |
+| `gemini-web-cli generate image/vision/video` | 保留旧入口：`gemini-web generate image/vision/video`；整合入口：`notebooklm gemini generate image/vision/video`，其中 video 为 experimental |
+| `gemini-web-cli flow ...` | 保留旧入口：`gemini-web flow ...`；整合入口：`notebooklm flow ...`，当前 Flow 命令为 experimental |
 | `colab-cdp-cli notebook list/select/current/open` | `notebooklm targets ... --product colab`，也可用 `notebooklm colab notebook ...` alias |
 | `colab-cdp-cli cell/runtime/file/artifact/notebook export` | `notebooklm colab cell/runtime/file/artifact/notebook export ...` |
 
-旧仓只作为迁移来源；使用本仓不需要安装旧 Gemini/Colab 仓库。
+旧仓只作为迁移来源；使用本仓不需要安装旧 Gemini/Colab 仓库，但会继续保留 `gemini-web` 兼容命令入口。
 
 ---
 
@@ -420,14 +420,14 @@ Colab file / artifact / export boundaries:
 | Old entry point | New entry point |
 |---|---|
 | Standalone NotebookLM CLI usage | Keep using `notebooklm notebook/source/chat/research/artifact/generate/download ...` |
-| `gemini-web-cli generate text` | `notebooklm gemini generate text` |
-| `gemini-web-cli ask` | `notebooklm gemini ask` |
-| `gemini-web-cli generate image/vision/video` | `notebooklm gemini generate image/vision/video`; video is experimental |
-| `gemini-web-cli flow ...` | `notebooklm flow ...`; current Flow commands are experimental |
+| `gemini-web-cli generate text` | preserved legacy entrypoint: `gemini-web generate text`; integrated entrypoint: `notebooklm gemini generate text` |
+| `gemini-web-cli ask` | preserved legacy entrypoint: `gemini-web ask`; integrated entrypoint: `notebooklm gemini ask` |
+| `gemini-web-cli generate image/vision/video` | preserved legacy entrypoint: `gemini-web generate image/vision/video`; integrated entrypoint: `notebooklm gemini generate image/vision/video`; video is experimental |
+| `gemini-web-cli flow ...` | preserved legacy entrypoint: `gemini-web flow ...`; integrated entrypoint: `notebooklm flow ...`; current Flow commands are experimental |
 | `colab-cdp-cli notebook list/select/current/open` | `notebooklm targets ... --product colab`, or the `notebooklm colab notebook ...` aliases |
 | `colab-cdp-cli cell/runtime/file/artifact/notebook export` | `notebooklm colab cell/runtime/file/artifact/notebook export ...` |
 
-The old Gemini and Colab repositories are migration sources only. They are not required dependencies for this package.
+The old Gemini and Colab repositories are migration sources only. They are not required dependencies for this package, but the `gemini-web` compatibility entrypoint remains available.
 
 ---
 
