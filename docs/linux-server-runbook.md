@@ -1,6 +1,6 @@
 # Linux Server Runbook
 
-This runbook documents the validated Linux-first deployment path for `notebooklm-cdp-cli`.
+This runbook documents the validated Linux-first deployment path for `google2api-cli` (package compatibility currently remains `notebooklm-cdp-cli`).
 
 ## Scope
 
@@ -99,15 +99,15 @@ If Google login is required, complete it there so the same server-side Chrome pr
 
 ```bash
 mkdir -p "$HOME/work"
-git clone https://github.com/muqiao215/notebooklm-cdp-cli.git "$HOME/work/notebooklm-cdp-cli"
-cd "$HOME/work/notebooklm-cdp-cli"
+git clone https://github.com/muqiao215/google2api-cli.git "$HOME/work/google2api-cli"
+cd "$HOME/work/google2api-cli"
 ~/.local/bin/uv sync
 ```
 
 Use the bundled verification script:
 
 ```bash
-ssh root@<host> 'REPO_DIR=$HOME/work/notebooklm-cdp-cli bash -s' < scripts/verify-linux-host.sh
+ssh root@<host> 'REPO_DIR=$HOME/work/google2api-cli bash -s' < scripts/verify-linux-host.sh
 ```
 
 Or run the key commands directly:

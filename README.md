@@ -1,9 +1,9 @@
-# notebooklm-cdp-cli
+# google2api-cli
 
 让 NotebookLM 回到你真正工作的浏览器里。
 Bring NotebookLM back to the browser you actually work in.
 
-Unofficial NotebookLM CLI with live Chrome identity reuse via CDP.
+NotebookLM upgrade path with live Chrome identity reuse via CDP.
 
 Language: [中文](#中文) | [English](#english)
 
@@ -13,7 +13,39 @@ Language: [中文](#中文) | [English](#english)
 
 ### 是什么
 
-notebooklm-cdp-cli 是一个非官方的 NotebookLM 命令行工具。
+`google2api-cli` 是 `notebooklm-cdp-cli` 的升级命名版本。
+
+当前仓库主打的是更宽的 Google 工作流入口，但现阶段仍保持 `notebooklm` / `gemini-web` / `colab` 这些现有命令不变。
+
+你可以把它理解成：
+
+- 仓库品牌升级为 `google2api-cli`
+- NotebookLM 仍然是当前最成熟、最清晰的主入口
+- 对老用户继续兼容 `notebooklm-cdp-cli` 的安装和命令习惯
+
+一句话：这是一个以 NotebookLM 为起点、向更广 Google 工作流延展的 CLI 升级版。
+
+---
+
+### 当前兼容策略
+
+- GitHub 仓库名已经升级为 `google2api-cli`
+- Python 包名暂时仍为 `notebooklm-cdp-cli`
+- 主命令暂时仍为 `notebooklm`
+- `gemini-web` 和 `colab` 保持现有入口
+
+这样做的目的是先完成品牌整理，不立刻打断已有脚本、文档和用户环境。
+
+---
+
+### NotebookLM 升级版定位
+
+如果你之前把它看成“一个只服务 NotebookLM 的 CDP CLI”，现在可以把它更新理解为：
+
+- NotebookLM 是第一主入口
+- Gemini / Flow / Colab 已经并入同一命令体系
+- 真实浏览器身份复用仍然是整套设计的核心
+- 未来仓库命名不再限制在单产品叙事里
 
 它保留 CLI / RPC 的效率，
 但把认证思路从 **Playwright 的 storage_state.json**，
@@ -152,7 +184,7 @@ Xvfb :99
   -> 持久 Chrome profile
   -> CDP on 127.0.0.1:9222
   -> x11vnc + noVNC
-  -> notebooklm-cdp-cli --host/--port
+  -> google2api-cli / notebooklm --host/--port
 ```
 
 Chrome 的关键启动方式：
@@ -336,7 +368,28 @@ MIT. See LICENSE.
 
 ### What this is
 
-notebooklm-cdp-cli is an unofficial NotebookLM CLI.
+`google2api-cli` is the renamed and broadened evolution of `notebooklm-cdp-cli`.
+
+The repository name now reflects a wider Google-facing CLI surface, while the current installed package and commands remain compatible with the existing `notebooklm`, `gemini-web`, and `colab` entry points.
+
+In practice, this means:
+
+- the repository brand is now `google2api-cli`
+- NotebookLM is still the clearest and most mature primary entry
+- existing command habits do not break immediately
+
+This is best read as a NotebookLM-first upgrade path, not a sudden rewrite of the CLI contract.
+
+---
+
+### Compatibility policy
+
+- GitHub repository: `google2api-cli`
+- Python package name: still `notebooklm-cdp-cli` for now
+- main command: still `notebooklm`
+- `gemini-web` and `colab` remain valid product commands
+
+The goal is to clean up branding first without breaking existing scripts and environments.
 
 It keeps the speed of CLI / RPC workflows,
 but moves auth away from Playwright's `storage_state.json`
@@ -474,7 +527,7 @@ Xvfb :99
   -> persistent Chrome profile
   -> CDP on 127.0.0.1:9222
   -> x11vnc + noVNC
-  -> notebooklm-cdp-cli --host/--port
+  -> google2api-cli / notebooklm --host/--port
 ```
 
 Key Chrome launch pattern:

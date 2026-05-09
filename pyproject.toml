@@ -34,9 +34,9 @@ gemini-web = "notebooklm_cdp_cli.products.gemini.legacy_cli:main"
 colab = "notebooklm_cdp_cli.products.colab.legacy_cli:main"
 
 [project.urls]
-Homepage = "https://github.com/muqiao215/notebooklm-cdp-cli"
-Repository = "https://github.com/muqiao215/notebooklm-cdp-cli"
-Issues = "https://github.com/muqiao215/notebooklm-cdp-cli/issues"
+Homepage = "https://github.com/muqiao215/google2api-cli"
+Repository = "https://github.com/muqiao215/google2api-cli"
+Issues = "https://github.com/muqiao215/google2api-cli/issues"
 
 [dependency-groups]
 dev = [
